@@ -919,10 +919,7 @@ std::vector<MmapTensorStore> ModelLoader::mmap_tensors(std::map<std::string, ggm
             size_t tensor_size   = tensor_storage.nbytes();
             size_t tensor_offset = tensor_storage.offset;
 
-            if (tensor_storage.ne[0] != dst_tensor->ne[0] ||
-                tensor_storage.ne[1] != dst_tensor->ne[1] ||
-                tensor_storage.ne[2] != dst_tensor->ne[2] ||
-                tensor_storage.ne[3] != dst_tensor->ne[3] ||
+            if (!sd_shapes_match_allow_1d_transpose(tensor_storage.ne, dst_tensor->ne) ||
                 tensor_size != ggml_nbytes(dst_tensor)) {
                 // let load_tensors worry about this
                 continue;
@@ -1318,11 +1315,13 @@ bool ModelLoader::load_tensor(const TensorStorage& tensor_storage, ggml_tensor* 
             return false;
         }
 
-        for (int i = 0; i < current_tensor_storage.n_dims; i++) {
-            if (current_tensor_storage.ne[i] != dst_tensor->ne[i]) {
-                LOG_ERROR("load tensor failed: shape mismatch for '%s'", tensor_storage.name.c_str());
-                return false;
-            }
+        int64_t cur_ne[4] = {1, 1, 1, 1};
+        for (int i = 0; i < std::min(4, current_tensor_storage.n_dims); i++) {
+            cur_ne[i] = current_tensor_storage.ne[i];
+        }
+        if (!sd_shapes_match_allow_1d_transpose(cur_ne, dst_tensor->ne)) {
+            LOG_ERROR("load tensor failed: shape mismatch for '%s'", tensor_storage.name.c_str());
+            return false;
         }
 
         *out_tensor = dst_tensor;
@@ -1438,11 +1437,7 @@ bool ModelLoader::load_tensors(std::map<std::string, ggml_tensor*>& tensors,
             return true;
         }
 
-        if (
-            real->ne[0] != tensor_storage.ne[0] ||
-            real->ne[1] != tensor_storage.ne[1] ||
-            real->ne[2] != tensor_storage.ne[2] ||
-            real->ne[3] != tensor_storage.ne[3]) {
+        if (!sd_shapes_match_allow_1d_transpose(real->ne, tensor_storage.ne)) {
             LOG_ERROR(
                 "tensor '%s' has wrong shape in model file: "
                 "got [%d, %d, %d, %d], expected [%d, %d, %d, %d]",

@@ -118,4 +118,21 @@ bool sd_backend_is(ggml_backend_t backend, const std::string& name);
 #define LOG_INFO(format, ...) log_printf(SD_LOG_INFO, __FILE__, __LINE__, format, ##__VA_ARGS__)
 #define LOG_WARN(format, ...) log_printf(SD_LOG_WARN, __FILE__, __LINE__, format, ##__VA_ARGS__)
 #define LOG_ERROR(format, ...) log_printf(SD_LOG_ERROR, __FILE__, __LINE__, format, ##__VA_ARGS__)
+
+static inline bool sd_shapes_match_allow_1d_transpose(const int64_t a_ne[4],
+                                                      const int64_t b_ne[4]) {
+    if (a_ne[0] == b_ne[0] && a_ne[1] == b_ne[1] && a_ne[2] == b_ne[2] && a_ne[3] == b_ne[3]) {
+        return true;
+    }
+    int64_t a_elems = a_ne[0] * a_ne[1] * a_ne[2] * a_ne[3];
+    int64_t b_elems = b_ne[0] * b_ne[1] * b_ne[2] * b_ne[3];
+    if (a_elems == b_elems && a_ne[2] == 1 && a_ne[3] == 1 && b_ne[2] == 1 && b_ne[3] == 1) {
+        if ((a_ne[0] == 1 && a_ne[1] == b_ne[0] && b_ne[1] == 1) ||
+            (a_ne[1] == 1 && a_ne[0] == b_ne[1] && b_ne[0] == 1)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 #endif  // __SD_CORE_UTIL_H__

@@ -442,6 +442,38 @@ namespace sd::pipeline {
         condition_params.zero_out_masked = false;
         auto cond                        = sd->cond_stage_model->get_learned_condition(sd->n_threads,
                                                                                        condition_params);
+        // TEMP-DIAG conditioning stats for the white-image hunt. REMOVE after.
+        {
+            const sd::Tensor<float> * cts[3] = {&cond.c_crossattn, &cond.c_vector, &cond.c_concat};
+            const char * cns[3]              = {"c_crossattn", "c_vector", "c_concat"};
+            for (int ci = 0; ci < 3; ++ci) {
+                const sd::Tensor<float> & ct = *cts[ci];
+                if (ct.empty()) {
+                    continue;
+                }
+                const float * cp = ct.data();
+                size_t cn        = (size_t) ct.numel();
+                float cmn = cp[0], cmx = cp[0];
+                double csum = 0;
+                bool cbad = false;
+                for (size_t ck = 0; ck < cn; ++ck) {
+                    const float v = cp[ck];
+                    if (!(v <= 3.402823e+38f && v >= -3.402823e+38f)) {
+                        cbad = true;
+                        break;
+                    }
+                    if (v < cmn) {
+                        cmn = v;
+                    }
+                    if (v > cmx) {
+                        cmx = v;
+                    }
+                    csum += v;
+                }
+                LOG_WARN("DIAG cond %s n=%zu min=%.4g max=%.4g mean=%.4g %s",
+                         cns[ci], cn, cmn, cmx, csum / (double) cn, cbad ? "NONFINITE" : "");
+            }
+        }
         if (cond.c_concat.empty() && ref_image_params.pass_to_dit) {
             cond.c_concat = latents->concat_latent;  // TODO: optimize
         }
@@ -873,6 +905,30 @@ namespace sd::pipeline {
             int64_t sampling_end  = ggml_time_ms();
             if (!x_0.empty()) {
                 LOG_INFO("sampling completed, taking %.2fs", (sampling_end - sampling_start) * 1.0f / 1000);
+                // TEMP-DIAG latent stats for the white-image hunt. REMOVE after.
+                {
+                    const float * lp = x_0.data();
+                    size_t ln        = (size_t) x_0.numel();
+                    float lmn = lp[0], lmx = lp[0];
+                    double lsum = 0;
+                    bool lbad = false;
+                    for (size_t li = 0; li < ln; ++li) {
+                        const float v = lp[li];
+                        if (!(v <= 3.402823e+38f && v >= -3.402823e+38f)) {
+                            lbad = true;
+                            break;
+                        }
+                        if (v < lmn) {
+                            lmn = v;
+                        }
+                        if (v > lmx) {
+                            lmx = v;
+                        }
+                        lsum += v;
+                    }
+                    LOG_WARN("DIAG latent n=%zu min=%.4g max=%.4g mean=%.4g %s",
+                             ln, lmn, lmx, lsum / (double) ln, lbad ? "NONFINITE" : "");
+                }
                 final_latents.push_back(std::move(x_0));
                 continue;
             }

@@ -748,6 +748,51 @@ bool GGMLRunner::execute_segment(ggml_cgraph* graph, int n_threads) {
         LOG_ERROR("%s compute failed: %s", get_desc().c_str(), ggml_status_to_string(status));
         return false;
     }
+    // TEMP-DIAG magnitude profile: min/max/mean of every F32 matmul output,
+    // first 8 segment executions, any graph. REMOVE after.
+    {
+        static int diag_mm_stats_count = 0;
+        if (diag_mm_stats_count < 8) {
+            const int diag_exec = diag_mm_stats_count++;
+            const int diag_n = ggml_graph_n_nodes(graph);
+            for (int di = 0; di < diag_n; ++di) {
+                ggml_tensor * dnode = ggml_graph_node(graph, di);
+                if (dnode->op != GGML_OP_MUL_MAT && dnode->op != GGML_OP_MUL_MAT_SEGMENTED) {
+                    continue;
+                }
+                if (dnode->type != GGML_TYPE_F32 || dnode->data == nullptr || dnode->src[0] == nullptr) {
+                    continue;
+                }
+                if (ggml_nelements(dnode) == 0) {
+                    continue;
+                }
+                const float * dd = (const float *) dnode->data;
+                const size_t dn  = ggml_nelements(dnode);
+                float dmn = dd[0], dmx = dd[0];
+                double dsum = 0;
+                bool dbad = false;
+                for (size_t dk = 0; dk < dn; ++dk) {
+                    const float v = dd[dk];
+                    if (!(v <= 3.402823e+38f && v >= -3.402823e+38f)) {
+                        dbad = true;
+                        break;
+                    }
+                    if (v < dmn) {
+                        dmn = v;
+                    }
+                    if (v > dmx) {
+                        dmx = v;
+                    }
+                    dsum += v;
+                }
+                LOG_WARN("DIAG stat [%s#%d] %s wtype=%s K=%lld N=%lld M=%lld min=%.4g max=%.4g mean=%.4g %s",
+                         get_desc().c_str(), diag_exec, ggml_get_name(dnode), ggml_type_name(dnode->src[0]->type),
+                         (long long) dnode->src[0]->ne[0], (long long) dnode->src[0]->ne[1],
+                         (long long) dnode->ne[1],
+                         dmn, dmx, dsum / (double) dn, dbad ? "NONFINITE" : "");
+            }
+        }
+    }
     const std::string description = get_desc();
     if (!debug_tensors.empty()) {
         std::unordered_set<const ggml_tensor*> graph_tensors;

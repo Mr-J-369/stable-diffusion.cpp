@@ -32,6 +32,11 @@ public:
         if (vae_downsample) {
             auto conv = std::dynamic_pointer_cast<Conv2d>(blocks["conv"]);
 
+            // Keep this conv on the direct kernel when possible: accelerated
+            // backends may store its weight in a layout only that kernel reads.
+            if (ggml_tensor* out = conv->try_forward_downsample2(ctx, x)) {
+                return out;  // [N, out_channels, h/2, w/2]
+            }
             x = ggml_ext_pad(ctx->ggml_ctx, x, 1, 1, 0, 0, ctx->circular_x_enabled, ctx->circular_y_enabled);
             x = conv->forward(ctx, x);
         } else {

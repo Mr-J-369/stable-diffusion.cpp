@@ -761,10 +761,7 @@ bool ModelManager::validate_tensor(const TensorState& state) const {
     }
 
     const TensorStorage& tensor_storage = state.source;
-    if (state.tensor->ne[0] != tensor_storage.ne[0] ||
-        state.tensor->ne[1] != tensor_storage.ne[1] ||
-        state.tensor->ne[2] != tensor_storage.ne[2] ||
-        state.tensor->ne[3] != tensor_storage.ne[3]) {
+    if (!sd_shapes_match_allow_1d_transpose(state.tensor->ne, tensor_storage.ne)) {
         LOG_ERROR(
             "%s tensor '%s' has wrong shape in model metadata: got [%d, %d, %d, %d], expected [%d, %d, %d, %d]",
             model_component_name(state.component),
