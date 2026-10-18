@@ -159,6 +159,10 @@ namespace ZImage {
                 out_proj->set_force_prec_f32(true);
                 qkv_proj->set_force_prec_f32(true);
             }
+            if (sd_backend_is(ctx->backend, "HTP") && out_proj->weight_type() != GGML_TYPE_F8_E4M3) {
+                out_proj->set_scale(1.f / 16.f);
+                out_proj->set_force_prec_f32(true);
+            }
 
             auto qkv = qkv_proj->forward(ctx, x);                                                                            // [N, n_token, (num_heads + num_kv_heads*2)*head_dim]
             qkv      = ggml_reshape_4d(ctx->ggml_ctx, qkv, head_dim, num_heads + num_kv_heads * 2, qkv->ne[1], qkv->ne[2]);  // [N, n_token, num_heads + num_kv_heads*2, head_dim]

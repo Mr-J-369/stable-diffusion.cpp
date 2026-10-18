@@ -204,6 +204,11 @@ public:
         force_prec_f32 = force_prec_f32_;
     }
 
+    ggml_type weight_type() const {
+        auto it = params.find("weight");
+        return it != params.end() && it->second ? it->second->type : GGML_TYPE_F32;
+    }
+
     ggml_tensor* forward(GGMLRunnerContext* ctx, ggml_tensor* x) override {
         ggml_tensor* w            = params["weight"];
         ggml_tensor* weight_scale = has_weight_scale ? params["weight_scale"] : nullptr;
