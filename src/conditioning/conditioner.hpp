@@ -1789,8 +1789,17 @@ struct LLMEmbedder : public Conditioner {
             arch = LLM::LLMArch::QWEN3_VL;
         } else if (sd_version_is_z_image(version) || version == VERSION_OVIS_IMAGE || version == VERSION_FLUX2_KLEIN) {
             arch = LLM::LLMArch::QWEN3;
+        } else if (version == VERSION_MOSS_IMAGE) {
+            arch = LLM::LLMArch::QWEN3_5;
         }
-        if (arch == LLM::LLMArch::MISTRAL_SMALL_3_2 || arch == LLM::LLMArch::MINISTRAL_3_3B) {
+        if (arch == LLM::LLMArch::QWEN3_5) {
+            // Qwen3.5's vocabulary is not Qwen2's: its tokenizer.json, named by the environment (no ABI change).
+            const char* path = getenv("SD_QWEN35_TOKENIZER");
+            if (path == nullptr || *path == '\0') {
+                throw std::runtime_error("MOSS-Image needs the Qwen3.5 tokenizer.json: set SD_QWEN35_TOKENIZER to its path");
+            }
+            tokenizer = std::make_shared<Qwen35Tokenizer>(path);
+        } else if (arch == LLM::LLMArch::MISTRAL_SMALL_3_2 || arch == LLM::LLMArch::MINISTRAL_3_3B) {
             tokenizer = std::make_shared<MistralTokenizer>();
         } else if (arch == LLM::LLMArch::GPT_OSS_20B) {
             tokenizer = std::make_shared<GPTOSSTokenizer>();
@@ -2090,7 +2099,12 @@ struct LLMEmbedder : public Conditioner {
         int64_t t0                     = ggml_time_ms();
         RefImageResizeMode resize_mode = conditioner_params.ref_image_params.vlm_resize_mode;
 
-        if (sd_version_is_minimax_h3(version)) {
+        if (version == VERSION_MOSS_IMAGE) {
+            prompt_template_encode_start_idx = 0;
+            max_length                       = 4096;
+            prompt                           = "<|im_start|>user\n" + conditioner_params.text + "<|im_end|>\n<|im_start|>assistant\n<think>\n";
+            prompt_attn_range                = {0, 0};
+        } else if (sd_version_is_minimax_h3(version)) {
             prompt_template_encode_start_idx = 0;
             out_layers                       = {50};
             prompt_attn_range                = {0, 0};
