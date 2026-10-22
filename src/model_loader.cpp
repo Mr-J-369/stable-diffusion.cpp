@@ -454,6 +454,9 @@ SDVersion ModelLoader::get_sd_version() const {
         if (tensor_storage.name.find("model.diffusion_model.nerf_final_layer_conv.") != std::string::npos) {
             return VERSION_CHROMA_RADIANCE;
         }
+        if (tensor_storage.name.find("model.diffusion_model.distilled_guidance_layer.") != std::string::npos) {
+            return VERSION_CHROMA_RADIANCE;
+        }
         if (tensor_storage.name.find("model.diffusion_model.joint_blocks.") != std::string::npos) {
             return VERSION_SD3;
         }
