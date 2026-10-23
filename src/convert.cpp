@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <condition_variable>
 #include <cstdint>
 #include <cstring>
@@ -16,6 +17,8 @@
 #include "model_io/safetensors_io.h"
 #include "model_io/streaming_writer.h"
 #include "model_loader.h"
+#include "name_conversion.h"
+#include "runtime/imatrix.h"
 
 struct TensorExportInfo {
     TensorStorage storage;
@@ -60,6 +63,18 @@ static bool collect_tensors_for_export(ModelLoader& model_loader,
     tensors.reserve(model_loader.get_tensor_storage_map().size());
     for (const auto& kv : model_loader.get_tensor_storage_map()) {
         const TensorStorage& tensor_storage = kv.second;
+        if (ends_with(tensor_storage.name, ".weight_scale")) {
+            // ComfyUI fp8/int8 scale sibling. The runner multiplies layer outputs by any
+            // weight_scale it finds, so a stale scale next to already-correct (e.g. quantized
+            // or unscaled) weights crushes activations. Keep it only when the sibling weight
+            // is really int8_tensorwise, its one legitimate consumer.
+            const std::string wname =
+                tensor_storage.name.substr(0, tensor_storage.name.size() - std::string("_scale").size());
+            auto wit = model_loader.get_tensor_storage_map().find(wname);
+            if (wit == model_loader.get_tensor_storage_map().end() || !wit->second.is_int8_tensorwise) {
+                continue;
+            }
+        }
         TensorExportInfo info;
         info.storage = tensor_storage;
         info.type    = get_export_tensor_type(model_loader, tensor_storage, type, tensor_type_rules);
@@ -122,7 +137,67 @@ static bool preallocate_output_file(const std::string& output_path, uint64_t fil
     return true;
 }
 
+static const TensorStorage* find_fp8_scale_sibling(ModelLoader& model_loader,
+                                                      const TensorStorage& tensor_storage) {
+    if (!tensor_storage.is_f8_e4m3 && !tensor_storage.is_f8_e5m2) {
+        return nullptr;
+    }
+    auto& map = model_loader.get_tensor_storage_map();
+    auto it   = map.find(tensor_storage.name + "_scale");
+    if (it == map.end() || it->second.type != GGML_TYPE_F32 || it->second.nelements() != 1) {
+        return nullptr;
+    }
+    return &it->second;
+}
+
+// ComfyUI fp8_scaled files store scaled values: true = stored * scale. Quantizing the raw
+// stored values bakes in a 100-1000x error (activations detonate into static). Unscale through
+// F32 first, then run the normal F32->target path (same kernels as every other convert).
+static bool load_unscaled_f8_for_export(ModelLoader& model_loader, TensorExportJob& job,
+                                        const TensorStorage& scale_storage) {
+    const TensorStorage& tensor_storage = job.info.storage;
+    const size_t ne                     = (size_t)tensor_storage.nelements();
+    const int64_t ne0                   = tensor_storage.ne[0];
+    if (ne == 0 || ne0 <= 0 || ne % (size_t)ne0 != 0) {
+        job.error = "invalid dims for fp8 unscale on tensor '" + tensor_storage.name + "'";
+        return false;
+    }
+    std::vector<float> f32(ne);
+    if (!model_loader.load_float_tensor(tensor_storage.name, f32) || f32.size() != ne) {
+        job.error = "failed to load fp8 tensor '" + tensor_storage.name + "' as F32";
+        return false;
+    }
+    std::vector<float> scale;
+    if (!model_loader.load_float_tensor(scale_storage.name, scale) || scale.size() != 1) {
+        job.error = "failed to load scale tensor '" + scale_storage.name + "'";
+        return false;
+    }
+    const float s = scale[0];
+    if (!(s > 0.f) || !std::isfinite(s)) {
+        job.error = "insane scale for tensor '" + tensor_storage.name + "'";
+        return false;
+    }
+    for (size_t i = 0; i < ne; i++) {
+        f32[i] *= s;
+    }
+    TensorStorage output_storage = tensor_storage;
+    output_storage.type          = job.info.type;
+    const size_t out_nbytes      = (size_t)output_storage.nbytes();
+    job.data.resize(out_nbytes);
+    std::string processed_name = convert_tensor_name(tensor_storage.name, model_loader.get_sd_version());
+    std::vector<float> imatrix = get_imatrix_collector().get_values(processed_name);
+    convert_tensor((void*)f32.data(), GGML_TYPE_F32, (void*)job.data.data(), job.info.type,
+                   (int)(ne / (size_t)ne0), (int)ne0, std::move(imatrix));
+    return true;
+}
+
 static bool load_tensor_for_export(ModelLoader& model_loader, TensorExportJob& job) {
+    const TensorStorage& tensor_storage = job.info.storage;
+    if (job.info.type != tensor_storage.type) {
+        if (const TensorStorage* scale = find_fp8_scale_sibling(model_loader, tensor_storage)) {
+            return load_unscaled_f8_for_export(model_loader, job, *scale);
+        }
+    }
     size_t mem_size = 1 * 1024 * 1024;
     mem_size += ggml_tensor_overhead();
     TensorStorage output_storage = job.info.storage;
