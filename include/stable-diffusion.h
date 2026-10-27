@@ -237,6 +237,8 @@ typedef struct {
     const char* params_backend;
     const char* split_mode;  // weight distribution for multi-device modules: layer (default) or row, or per-module assignments e.g. "diffusion=row"
     bool auto_fit;
+    const char* auto_fit_backend;  // preferred GPU for auto-fit placement; empty selects the default GPU
+    float auto_fit_max_ram_gib;  // maximum system RAM budget for auto-fit parameter placement; 0 uses detected availability
     const char* rpc_servers;
     const char* model_args;
     bool disable_segmented_compute;  // Force monolithic graph execution even when automatic graph cutting would fit memory better

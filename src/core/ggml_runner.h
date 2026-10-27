@@ -69,6 +69,7 @@ struct GGMLRunnerContext {
     ggml_context* ggml_ctx                                           = nullptr;
     bool flash_attn_enabled                                          = false;
     bool conv2d_direct_enabled                                       = false;
+    bool anima_vae                                                   = false;
     bool circular_x_enabled                                          = false;
     bool circular_y_enabled                                          = false;
     ggml_tensor* ip_context                                          = nullptr;

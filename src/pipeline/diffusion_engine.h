@@ -93,6 +93,7 @@ public:
     std::string backend_spec;
     std::string params_backend_spec;
     std::string split_mode_spec;
+    std::string auto_fit_backend_spec;
     bool auto_fit_enabled = false;
 
     bool diffusion_conv_direct = false;

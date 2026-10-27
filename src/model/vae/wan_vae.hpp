@@ -97,10 +97,17 @@ namespace WAN {
             }
 
             x = ggml_ext_pad_ext(ctx->ggml_ctx, ctx->backend, x, lp0, rp0, lp1, rp1, lp2, rp2, 0, 0, ctx->circular_x_enabled, ctx->circular_y_enabled);
-            return ggml_ext_conv_3d(ctx->ggml_ctx, ctx->backend, x, w, b, in_channels,
-                                    std::get<2>(stride), std::get<1>(stride), std::get<0>(stride),
-                                    0, 0, 0,
-                                    std::get<2>(dilation), std::get<1>(dilation), std::get<0>(dilation));
+            const bool out_of_place_bias = ctx->anima_vae && b != nullptr;
+            ggml_tensor* out = ggml_ext_conv_3d(ctx->ggml_ctx, ctx->backend, x, w,
+                                                out_of_place_bias ? nullptr : b, in_channels,
+                                                std::get<2>(stride), std::get<1>(stride), std::get<0>(stride),
+                                                0, 0, 0,
+                                                std::get<2>(dilation), std::get<1>(dilation), std::get<0>(dilation));
+            if (out_of_place_bias) {
+                b   = ggml_reshape_4d(ctx->ggml_ctx, b, 1, 1, 1, b->ne[0]);
+                out = ggml_add(ctx->ggml_ctx, out, b);
+            }
+            return out;
         }
     };
 
@@ -1361,13 +1368,15 @@ namespace WAN {
             : VAE(version, backend, prefix, weight_manager), decode_only(decode_only) {
             const auto conv_in = tensor_storage_map.find((prefix.empty() ? "" : prefix + ".") + "decoder.conv1.weight");
             const bool is_2D   = conv_in != tensor_storage_map.end() && conv_in->second.ne[2] > 3;
-            LOG_VERBOSE("Wan VAE convolution type: %s", is_2D ? "2D" : "3D");
+            LOG_VERBOSE("%s VAE convolution type: %s",
+                        sd_version_is_anima(version) ? "Anima" : "Wan",
+                        is_2D ? "2D" : "3D");
             ae = WanVAE(decode_only, version, is_2D);
             ae.init(params_ctx, tensor_storage_map, prefix);
         }
 
         std::string get_desc() override {
-            return "wan_vae";
+            return sd_version_is_anima(version) ? "anima_vae" : "wan_vae";
         }
 
         bool supports_temporal_tiling(VAETemporalDirection direction) const override {
@@ -1467,6 +1476,7 @@ namespace WAN {
             ggml_tensor* z  = make_input(z_tensor);
 
             auto runner_ctx = get_context();
+            runner_ctx.anima_vae = sd_version_is_anima(version);
 
             ggml_tensor* out = decode_graph ? ae.decode(&runner_ctx, z) : ae.encode(&runner_ctx, z);
 
@@ -1488,6 +1498,7 @@ namespace WAN {
             ggml_tensor* z = make_input(z_tensor);
 
             auto runner_ctx = get_context();
+            runner_ctx.anima_vae = sd_version_is_anima(version);
 
             ggml_tensor* out = ae.decode_tiled_chunk(&runner_ctx, z, chunk_idx);
 

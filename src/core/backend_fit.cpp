@@ -121,15 +121,20 @@ namespace sd::backend_fit {
         return name;
     }
 
-    static std::vector<Device> enumerate_gpu_devices(const sd::ggml_graph_cut::MaxVramAssignment& budgets) {
+    static std::vector<Device> enumerate_gpu_devices(const sd::ggml_graph_cut::MaxVramAssignment& budgets,
+                                                    const std::string& preferred_device) {
         std::vector<Device> out;
         for (size_t i = 0; i < ggml_backend_dev_count(); ++i) {
             ggml_backend_dev_t dev = ggml_backend_dev_get(i);
             if (ggml_backend_dev_type(dev) != GGML_BACKEND_DEVICE_TYPE_GPU) {
                 continue;
             }
+            const char* name = ggml_backend_dev_name(dev);
+            if (!preferred_device.empty() && preferred_device != name) {
+                continue;
+            }
             Device device;
-            device.name        = ggml_backend_dev_name(dev);
+            device.name        = name;
             device.description = ggml_backend_dev_description(dev);
             size_t free_bytes = 0, total_bytes = 0;
             ggml_backend_dev_memory(dev, &free_bytes, &total_bytes);
@@ -332,7 +337,9 @@ namespace sd::backend_fit {
                               ggml_type override_wtype,
                               sd::ggml_graph_cut::MaxVramAssignment& budgets,
                               std::string& runtime_spec,
-                              std::string& params_spec) {
+                              std::string& params_spec,
+                              const std::string& preferred_device,
+                              float max_ram_gib) {
         std::string error;
         if (!budgets.canonicalize_backend_keys(&error)) {
             LOG_ERROR("%s", error.c_str());
@@ -340,13 +347,25 @@ namespace sd::backend_fit {
         }
 
         const auto components    = estimate_components(loader, override_wtype);
-        const auto devices       = enumerate_gpu_devices(budgets);
+        const auto devices       = enumerate_gpu_devices(budgets, preferred_device);
+        if (!preferred_device.empty() && devices.empty()) {
+            LOG_ERROR("auto-fit: preferred GPU device %s was not found", preferred_device.c_str());
+            return false;
+        }
         const int64_t free_ram   = available_ram_bytes();
-        const int64_t ram_budget = std::max<int64_t>(free_ram - std::max<int64_t>(2048 * MiB, free_ram / 10), 0);
+        const int64_t detected_ram_budget =
+            std::max<int64_t>(free_ram - std::max<int64_t>(2048 * MiB, free_ram / 10), 0);
+        const int64_t ram_budget = max_ram_gib > 0.f
+            ? std::min<int64_t>(detected_ram_budget, static_cast<int64_t>(max_ram_gib * 1024.0 * MiB))
+            : detected_ram_budget;
         const auto plan          = compute_plan(components, devices, ram_budget);
         runtime_spec.clear();
         params_spec.clear();
         if (!plan.valid) {
+            if (!preferred_device.empty()) {
+                LOG_ERROR("auto-fit: no usable memory budget for preferred GPU device %s", preferred_device.c_str());
+                return false;
+            }
             if (devices.empty()) {
                 LOG_WARN("auto-fit: no GPU devices; using the default backend");
             } else {
