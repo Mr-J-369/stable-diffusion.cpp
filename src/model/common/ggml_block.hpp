@@ -524,7 +524,8 @@ public:
             ctx->weight_adapter || ctx->circular_x_enabled ||
             ctx->circular_y_enabled || scale != 1.f ||
             kernel_size != std::make_pair(3, 3) || stride != std::make_pair(2, 2) ||
-            padding != std::make_pair(0, 0) || dilation != std::make_pair(1, 1) ||
+            (padding != std::make_pair(0, 0) && padding != std::make_pair(1, 1)) ||
+            dilation != std::make_pair(1, 1) ||
             W % 2 != 0 || H % 2 != 0) {
             return nullptr;
         }
@@ -539,12 +540,13 @@ public:
         const int64_t C = full->ne[2];
         const int64_t N = full->ne[3];
         const size_t es = ggml_element_size(full);
-        // [N*OC*H/2, 2, W/2, 2] -> pick index 1 on both size-2 axes.
+        const size_t offset = padding == std::make_pair(0, 0) ? (es + W * es) : 0;
+        // [N*OC*H/2, 2, W/2, 2] -> pick index 1 (pad 0 after Asymmetric pad) or 0 (pad 1) on both size-2 axes.
         full = ggml_reshape_4d(ctx->ggml_ctx, full, 2, W / 2, 2, (H / 2) * C * N);
         ggml_tensor* out = ggml_view_4d(ctx->ggml_ctx, full,
                                         1, W / 2, 1, (H / 2) * C * N,
                                         2 * es, W * es, 2 * W * es,
-                                        es + W * es);
+                                        offset);
         out = ggml_cont(ctx->ggml_ctx, out);
         return ggml_reshape_4d(ctx->ggml_ctx, out, W / 2, H / 2, C, N);
     }

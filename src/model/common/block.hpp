@@ -42,6 +42,9 @@ public:
         } else {
             auto conv = std::dynamic_pointer_cast<Conv2d>(blocks["op"]);
 
+            if (ggml_tensor* out = conv->try_forward_downsample2(ctx, x)) {
+                return out;  // [N, out_channels, h/2, w/2]
+            }
             x = conv->forward(ctx, x);
         }
         return x;  // [N, out_channels, h/2, w/2]
