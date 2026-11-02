@@ -421,6 +421,11 @@ SDVersion ModelLoader::get_sd_version() const {
         return VERSION_MOSS_IMAGE;
     }
 
+    if (tensor_storage_map.find("model.diffusion_model.emb_in.image.weight") != tensor_storage_map.end() &&
+        tensor_storage_map.find("model.diffusion_model.txt_mode_blocks.0.q_proj.weight") != tensor_storage_map.end()) {
+        return VERSION_FLUX3;
+    }
+
     bool has_multiple_encoders = false;
     bool is_unet               = false;
 

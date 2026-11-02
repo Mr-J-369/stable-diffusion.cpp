@@ -1,3 +1,4 @@
+#include <cstring>
 #include <map>
 #include <unordered_map>
 #include <unordered_set>
@@ -1326,6 +1327,13 @@ static std::string convert_esrgan_tensor_name(std::string name) {
         esrgan_name_map["model.7."]  = "conv_last.";
         esrgan_name_map["model.8."]  = "conv_hr.";
         esrgan_name_map["model.10."] = "conv_last.";
+    }
+
+    for (const char* wrapper : {"params_ema.", "params."}) {
+        if (starts_with(name, wrapper)) {
+            name = name.substr(strlen(wrapper));
+            break;
+        }
     }
 
     replace_with_prefix_map(name, esrgan_name_map);
