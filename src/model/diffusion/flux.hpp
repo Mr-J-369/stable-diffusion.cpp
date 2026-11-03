@@ -399,9 +399,8 @@ namespace Flux {
             auto down_proj = std::dynamic_pointer_cast<Linear>(blocks["down_proj"]);
 
             auto gate = gate_proj->forward(ctx, x);
-            gate      = ggml_silu_inplace(ctx->ggml_ctx, gate);
-            x         = up_proj->forward(ctx, x);
-            x         = ggml_mul(ctx->ggml_ctx, x, gate);
+            auto up   = up_proj->forward(ctx, x);
+            x         = ggml_swiglu_split(ctx->ggml_ctx, gate, up);
             x         = down_proj->forward(ctx, x);
             return x;
         }
@@ -944,12 +943,10 @@ namespace Flux {
             auto res_x = x;
             x          = norm->forward(ctx, x);  // [batch_size, n_token, hidden_size_x]
 
-            auto x1 = ggml_mul_mat(ctx->ggml_ctx, fc1_gate, x);  // [batch_size, n_token, hidden_size_x*mlp_ratio]
-            x1      = ggml_silu_inplace(ctx->ggml_ctx, x1);
-
+            auto x1 = ggml_mul_mat(ctx->ggml_ctx, fc1_gate, x);   // [batch_size, n_token, hidden_size_x*mlp_ratio]
             auto x2 = ggml_mul_mat(ctx->ggml_ctx, fc1_value, x);  // [batch_size, n_token, hidden_size_x*mlp_ratio]
 
-            x = ggml_mul_inplace(ctx->ggml_ctx, x1, x2);  // [batch_size, n_token, hidden_size_x*mlp_ratio]
+            x = ggml_swiglu_split(ctx->ggml_ctx, x1, x2);  // [batch_size, n_token, hidden_size_x*mlp_ratio]
 
             x = ggml_mul_mat(ctx->ggml_ctx, fc2, x);  // [batch_size, n_token, hidden_size_x]
 
