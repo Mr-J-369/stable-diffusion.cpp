@@ -796,6 +796,26 @@ std::string convert_other_dit_to_original_anima(std::string name) {
     return name;
 }
 
+std::string convert_diffusers_dit_to_original_moss(std::string name) {
+    static const std::vector<std::pair<std::string, std::string>> prefix_map = {
+        {"transformer_blocks.", "layers."},
+        {"blocks.", "layers."},
+    };
+    static const std::vector<std::pair<std::string, std::string>> name_map = {
+        {"attn.to_qkv.", "proj.qkv."},
+        {"attn.to_q.", "proj.q."},
+        {"attn.to_k.", "proj.k."},
+        {"attn.to_v.", "proj.v."},
+        {"attn.to_out.0.", "proj.o."},
+        {"attn.to_out.", "proj.o."},
+        {"ff.net.0.proj.", "proj.ffn_up_gate."},
+        {"ff.net.2.", "proj.ffn_down."},
+    };
+    replace_with_prefix_map(name, prefix_map);
+    replace_with_name_map(name, name_map);
+    return name;
+}
+
 std::string convert_diffusers_dit_to_original_krea2(std::string name) {
     static const std::vector<std::pair<std::string, std::string>> prefix_map = {
         {"img_in.", "first."},
@@ -901,6 +921,8 @@ std::string convert_diffusion_model_name(std::string name, std::string prefix, S
         name = convert_other_dit_to_original_anima(name);
     } else if (sd_version_is_krea2(version)) {
         name = convert_diffusers_dit_to_original_krea2(name);
+    } else if (version == VERSION_MOSS_IMAGE) {
+        name = convert_diffusers_dit_to_original_moss(name);
     }
     return name;
 }
