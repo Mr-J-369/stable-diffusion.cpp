@@ -8,6 +8,7 @@
 #include "core/ggml_extend_backend.h"
 #include "core/ggml_runner.h"
 #include "core/ggml_tensor_utils.h"
+#include "core/pe_cache.h"
 #include "core/util.h"
 #include "model/common/ggml_block.hpp"
 #include "model/diffusion/flux.hpp"
@@ -583,10 +584,11 @@ namespace ZImage {
     };
 
     struct ZImageRunner : public DiffusionModelRunner {
+        sd::PECache pe_cache_;
+
     public:
         ZImageConfig config;
         ZImageModel z_image;
-        std::vector<float> pe_vec;
         std::vector<float> timestep_vec;
         SDVersion version;
 
@@ -626,25 +628,26 @@ namespace ZImage {
                 ref_latents.push_back(make_input(ref_latent_tensor));
             }
 
-            pe_vec      = Rope::gen_z_image_pe(static_cast<int>(x->ne[1]),
-                                               static_cast<int>(x->ne[0]),
-                                               config.patch_size,
-                                               static_cast<int>(x->ne[3]),
-                                               static_cast<int>(context->ne[1]),
-                                               SEQ_MULTI_OF,
-                                               ref_latents,
-                                               ref_index_mode,
-                                               config.theta,
-                                               circular_y_enabled,
-                                               circular_x_enabled,
-                                               config.axes_dim);
-            int pos_len = static_cast<int>(pe_vec.size() / config.axes_dim_sum / 2);
-            // LOG_VERBOSE("pos_len %d", pos_len);
-            auto pe = ggml_new_tensor_4d(compute_ctx, GGML_TYPE_F32, 2, 2, config.axes_dim_sum / 2, pos_len);
-            // pe->data = pe_vec.data();
-            // print_ggml_tensor(pe, true, "pe");
-            // pe->data = nullptr;
-            set_backend_tensor_data(pe, pe_vec.data());
+            sd::PECacheKey pe_key("z_image.pe");
+            pe_key.add_shape(x).add_shape(context).add(config.theta).add(config.axes_dim).add(config.axes_dim_sum);
+            pe_key.add(circular_x_enabled).add(circular_y_enabled).add(config.patch_size).add_shapes(ref_latents);
+            pe_key.add(ref_index_mode);
+            auto pe = make_input(pe_cache_.get_or_create(pe_key, [&]() {
+                auto pe_vec = Rope::gen_z_image_pe(static_cast<int>(x->ne[1]),
+                                                   static_cast<int>(x->ne[0]),
+                                                   config.patch_size,
+                                                   static_cast<int>(x->ne[3]),
+                                                   static_cast<int>(context->ne[1]),
+                                                   SEQ_MULTI_OF,
+                                                   ref_latents,
+                                                   ref_index_mode,
+                                                   config.theta,
+                                                   circular_y_enabled,
+                                                   circular_x_enabled,
+                                                   config.axes_dim);
+                int pos_len = static_cast<int>(pe_vec.size() / config.axes_dim_sum / 2);
+                return sd::Tensor<float>({2, 2, config.axes_dim_sum / 2, pos_len}, std::move(pe_vec));
+            }));
             auto runner_ctx = get_context();
 
             ggml_tensor* out = z_image.forward(&runner_ctx,

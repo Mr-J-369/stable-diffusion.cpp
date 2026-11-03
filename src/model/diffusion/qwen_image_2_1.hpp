@@ -381,9 +381,9 @@ namespace Qwen {
     };
 
     struct QwenImage21Runner : public DiffusionModelRunner {
+        sd::PECache pe_cache_;
         QwenImage21Config config;
         QwenImage21Model model;
-        std::vector<float> pe_data;
         std::vector<int32_t> token_indices_data;
         std::vector<sd::Tensor<float>> mask_data;
 
@@ -428,7 +428,13 @@ namespace Qwen {
                 LOG_ERROR("%s", error.what());
                 return {};
             }
-            pe_data = Rope::embed_nd(layout.positions, 1, 10000.f, config.axes_dim);
+            sd::PECacheKey pe_key("qwen_image_2_1.pe");
+            pe_key.add(config.axes_dim).add(config.head_dim).add(layout.positions);
+            pe_key.add(circular_x_enabled).add(circular_y_enabled);
+            const auto& pe_tensor = pe_cache_.get_or_create(pe_key, [&]() {
+                auto pe_data = Rope::embed_nd(layout.positions, 1, 10000.f, config.axes_dim);
+                return sd::Tensor<float>({2, 2, config.head_dim / 2, static_cast<int64_t>(layout.positions.size())}, std::move(pe_data));
+            });
             token_indices_data.resize(layout.positions.size());
             for (size_t i = 0; i < token_indices_data.size(); ++i) {
                 token_indices_data[i] = static_cast<int32_t>(i);
@@ -448,8 +454,7 @@ namespace Qwen {
             }
             auto build = [&]() {
                 auto graph = new_graph_custom(QWEN_IMAGE_GRAPH_SIZE * 2);
-                auto pe    = ggml_new_tensor_4d(compute_ctx, GGML_TYPE_F32, 2, 2, config.head_dim / 2, layout.positions.size());
-                set_backend_tensor_data(pe, pe_data.data());
+                auto pe    = make_input(pe_tensor);
                 auto token_indices = ggml_new_tensor_1d(compute_ctx, GGML_TYPE_I32, token_indices_data.size());
                 set_backend_tensor_data(token_indices, token_indices_data.data());
                 std::vector<ggml_tensor*> masks, ref_inputs;

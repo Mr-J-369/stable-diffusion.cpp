@@ -7,6 +7,7 @@
 #include <utility>
 #include "core/ggml_extend_backend.h"
 #include "core/ggml_tensor_utils.h"
+#include "core/pe_cache.h"
 
 #include "model/common/block.hpp"
 #include "model/common/rope.hpp"
@@ -794,11 +795,12 @@ namespace WAN {
     };
 
     struct WanRunner : public DiffusionModelRunner {
+        sd::PECache pe_cache_;
+
     public:
         std::string desc = "wan";
         WanConfig config;
         Wan wan;
-        std::vector<float> pe_vec;
         SDVersion version;
 
         WanRunner(ggml_backend_t backend,
@@ -902,22 +904,22 @@ namespace WAN {
             ggml_tensor* time_dim_concat = make_optional_input(time_dim_concat_tensor);
             ggml_tensor* vace_context    = make_optional_input(vace_context_tensor);
 
-            pe_vec      = Rope::gen_wan_pe(static_cast<int>(x->ne[2]),
-                                           static_cast<int>(x->ne[1]),
-                                           static_cast<int>(x->ne[0]),
-                                           std::get<0>(config.patch_size),
-                                           std::get<1>(config.patch_size),
-                                           std::get<2>(config.patch_size),
-                                           1,
-                                           config.theta,
-                                           config.axes_dim);
-            int pos_len = static_cast<int>(pe_vec.size() / config.axes_dim_sum / 2);
-            // LOG_VERBOSE("pos_len %d", pos_len);
-            auto pe = ggml_new_tensor_4d(compute_ctx, GGML_TYPE_F32, 2, 2, config.axes_dim_sum / 2, pos_len);
-            // pe->data = pe_vec.data();
-            // print_ggml_tensor(pe);
-            // pe->data = nullptr;
-            set_backend_tensor_data(pe, pe_vec.data());
+            sd::PECacheKey pe_key("wan.pe");
+            pe_key.add_shape(x).add(config.theta).add(config.axes_dim).add(config.patch_size);
+            pe_key.add(circular_x_enabled).add(circular_y_enabled);
+            auto pe = make_input(pe_cache_.get_or_create(pe_key, [&]() {
+                auto pe_vec = Rope::gen_wan_pe(static_cast<int>(x->ne[2]),
+                                               static_cast<int>(x->ne[1]),
+                                               static_cast<int>(x->ne[0]),
+                                               std::get<0>(config.patch_size),
+                                               std::get<1>(config.patch_size),
+                                               std::get<2>(config.patch_size),
+                                               1,
+                                               config.theta,
+                                               config.axes_dim);
+                int pos_len = static_cast<int>(pe_vec.size() / config.axes_dim_sum / 2);
+                return sd::Tensor<float>({2, 2, config.axes_dim_sum / 2, pos_len}, std::move(pe_vec));
+            }));
 
             if (c_concat != nullptr) {
                 x = ggml_concat(compute_ctx, x, c_concat, 3);

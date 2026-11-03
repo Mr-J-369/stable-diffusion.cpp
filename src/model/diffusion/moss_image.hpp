@@ -6,6 +6,7 @@
 
 #include "model/common/ggml_block.hpp"
 #include "model/common/rope.hpp"
+#include "core/pe_cache.h"
 #include "model/diffusion/dit.hpp"
 #include "model/diffusion/model.hpp"
 #include "model_loader.h"
@@ -254,9 +255,10 @@ namespace MOSSImage {
     };
 
     struct MOSSImageRunner : public DiffusionModelRunner {
+        sd::PECache pe_cache_;
         MOSSImageConfig config;
         Model model;
-        std::vector<float> pe_data, time_data;
+        std::vector<float> time_data;
 
         MOSSImageRunner(ggml_backend_t backend, const String2TensorStorage& weights, const std::string& prefix, std::shared_ptr<RunnerWeightManager> weight_manager = nullptr)
             : DiffusionModelRunner(backend, prefix, weight_manager), config(MOSSImageConfig::detect_from_weights(weights, prefix)), model(config) {
@@ -287,26 +289,30 @@ namespace MOSSImage {
                 int64_t h = x->ne[1], w = x->ne[0], nt = text->ne[1];
                 // Image tokens first (axis 1 = the text length, axes 2/3 centred rows/columns), then the text
                 // tokens counting up on axis 1. Our fork's embed_nd gives the [2, 2, head_dim/2, n] table directly.
-                std::vector<std::vector<float>> ids;
-                for (int64_t token = 0; token < h * w + nt; ++token) {
-                    float pos[4] = {0.f, float(token - h * w), 0.f, 0.f};
-                    if (token < h * w) {
-                        pos[1] = float(nt);
-                        pos[2] = float(token / w) - float(h - 1) / 2.f;
-                        pos[3] = float(token % w) - float(w - 1) / 2.f;
+                sd::PECacheKey pe_key("moss_image.pe");
+                pe_key.add_shape(x).add_shape(text).add(config.head_dim).add(config.channels);
+                pe_key.add(circular_x_enabled).add(circular_y_enabled);
+                auto pe = make_input(pe_cache_.get_or_create(pe_key, [&]() {
+                    std::vector<std::vector<float>> ids;
+                    for (int64_t token = 0; token < h * w + nt; ++token) {
+                        float pos[4] = {0.f, float(token - h * w), 0.f, 0.f};
+                        if (token < h * w) {
+                            pos[1] = float(nt);
+                            pos[2] = float(token / w) - float(h - 1) / 2.f;
+                            pos[3] = float(token % w) - float(w - 1) / 2.f;
+                        }
+                        ids.push_back({pos[0], pos[1], pos[2], pos[3]});
                     }
-                    ids.push_back({pos[0], pos[1], pos[2], pos[3]});
-                }
-                pe_data = Rope::embed_nd(ids, 1, 10000.f, std::vector<int>(4, static_cast<int>(config.head_dim / 4)));
+                    auto pe_data = Rope::embed_nd(ids, 1, 10000.f, std::vector<int>(4, static_cast<int>(config.head_dim / 4)));
+                    return sd::Tensor<float>({2, 2, config.head_dim / 2, h * w + nt}, std::move(pe_data));
+                }));
                 time_data.resize(config.freq_dim);
                 for (int64_t i = 0; i < config.freq_dim / 2; ++i) {
                     double angle                       = inputs.timesteps->values()[0] * std::pow(10000.0, -double(i) / double(config.freq_dim / 2));
                     time_data[i]                       = float(std::cos(angle));
                     time_data[i + config.freq_dim / 2] = float(std::sin(angle));
                 }
-                auto pe   = ggml_new_tensor_4d(compute_ctx, GGML_TYPE_F32, 2, 2, config.head_dim / 2, h * w + nt);
                 auto time = ggml_new_tensor_3d(compute_ctx, GGML_TYPE_F32, config.freq_dim, 1, 1);
-                set_backend_tensor_data(pe, pe_data.data());
                 set_backend_tensor_data(time, time_data.data());
                 auto ctx = get_context();
                 ggml_build_forward_expand(gf, model.forward(&ctx, x, time, text, pe, skip));
