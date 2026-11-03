@@ -155,7 +155,7 @@ namespace ZImage {
             auto qkv_proj   = std::dynamic_pointer_cast<Linear>(blocks["qkv"]);
             auto out_proj   = std::dynamic_pointer_cast<Linear>(blocks["out"]);
 
-            if (sd_backend_is(ctx->backend, "ROCm")) {
+            if (sd_backend_is(ctx->backend, "ROCm") || sd_backend_is(ctx->backend, "OpenCL")) {
                 out_proj->set_scale(1.f / 16.f);
                 out_proj->set_force_prec_f32(true);
                 qkv_proj->set_force_prec_f32(true);
@@ -163,6 +163,14 @@ namespace ZImage {
             if (sd_backend_is(ctx->backend, "HTP") && out_proj->weight_type() != GGML_TYPE_F8_E4M3) {
                 out_proj->set_scale(1.f / 16.f);
                 out_proj->set_force_prec_f32(true);
+            }
+
+            static bool logged_diag = false;
+            if (!logged_diag) {
+                LOG_INFO("[ZiT Diag] ZImage forward: backend='%s', weight_type=%d",
+                         ctx->backend ? ggml_backend_name(ctx->backend) : "null",
+                         out_proj ? (int)out_proj->weight_type() : -1);
+                logged_diag = true;
             }
 
             auto qkv = qkv_proj->forward(ctx, x);                                                                            // [N, n_token, (num_heads + num_kv_heads*2)*head_dim]
@@ -258,7 +266,7 @@ namespace ZImage {
             auto w2 = std::dynamic_pointer_cast<Linear>(blocks["w2"]);
             auto w3 = std::dynamic_pointer_cast<Linear>(blocks["w3"]);
 
-            if (sd_backend_is(ctx->backend, "Vulkan") || sd_backend_is(ctx->backend, "ROCm")) {
+            if (sd_backend_is(ctx->backend, "Vulkan") || sd_backend_is(ctx->backend, "ROCm") || sd_backend_is(ctx->backend, "OpenCL")) {
                 w2->set_force_prec_f32(true);
             }
 

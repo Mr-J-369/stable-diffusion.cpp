@@ -207,7 +207,7 @@ namespace Qwen {
                 }
             }
             auto to_out = std::dynamic_pointer_cast<Linear>(blocks["to_out.0"]);
-            if (sd_backend_is(ctx->backend, "Vulkan") || sd_backend_is(ctx->backend, "ROCm")) {
+            if (sd_backend_is(ctx->backend, "Vulkan") || sd_backend_is(ctx->backend, "ROCm") || sd_backend_is(ctx->backend, "OpenCL")) {
                 to_out->set_force_prec_f32(true);
             }
             return to_out->forward(ctx, result);
