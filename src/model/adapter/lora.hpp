@@ -163,6 +163,35 @@ struct LoraModel : public GGMLRunner {
 
             lora_tensors = std::move(new_lora_tensors);
         }
+
+        if (model_tensor_names.find("model.diffusion_model.layers.0.proj.qkv.weight") != model_tensor_names.end()) {
+            std::unordered_map<std::string, ggml_tensor*> new_lora_tensors;
+            for (auto& [old_name, tensor] : lora_tensors) {
+                std::string new_name = old_name;
+
+                if (contains(new_name, "model.diffusion_model.layers.")) {
+                    static const std::vector<std::pair<std::string, std::string>> qkv_name_map = {
+                        {"proj.q.weight", "proj.qkv.weight"},
+                        {"proj.q.bias", "proj.qkv.bias"},
+                        {"proj.k.weight", "proj.qkv.weight.1"},
+                        {"proj.k.bias", "proj.qkv.bias.1"},
+                        {"proj.v.weight", "proj.qkv.weight.2"},
+                        {"proj.v.bias", "proj.qkv.bias.2"},
+                    };
+                    for (const auto& kv : qkv_name_map) {
+                        size_t pos = new_name.find(kv.first);
+                        if (pos != std::string::npos) {
+                            new_name.replace(pos, kv.first.size(), kv.second);
+                            break;
+                        }
+                    }
+                }
+
+                new_lora_tensors[new_name] = tensor;
+            }
+
+            lora_tensors = std::move(new_lora_tensors);
+        }
     }
 
     ggml_tensor* get_lora_weight_diff(const std::string& model_tensor_name, ggml_context* ctx, ggml_backend_t backend) {
