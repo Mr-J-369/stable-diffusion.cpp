@@ -104,7 +104,7 @@ std::string convert_open_clip_to_hf_clip_name(std::string name) {
     return name;
 }
 
-std::string convert_cond_stage_model_name(std::string name, std::string prefix) {
+std::string convert_cond_stage_model_name(std::string name) {
     static const std::vector<std::pair<std::string, std::string>> clip_name_map{
         {"transformer.text_projection.weight", "transformer.text_model.text_projection"},
         {"model.text_projection.weight", "transformer.text_model.text_projection"},
@@ -272,11 +272,10 @@ std::string convert_diffusers_unet_to_original_sd1(std::string name) {
                 std::string sd_up_res_prefix = "output_blocks." + std::to_string(3 * i + j) + ".0.";
                 unet_conversion_map_layer.emplace_back(sd_up_res_prefix, hf_up_res_prefix);
 
-                if (/*i > 0*/ true) {  // for tiny unet
-                    std::string hf_up_atn_prefix = "up_blocks." + std::to_string(i) + ".attentions." + std::to_string(j) + ".";
-                    std::string sd_up_atn_prefix = "output_blocks." + std::to_string(3 * i + j) + ".1.";
-                    unet_conversion_map_layer.emplace_back(sd_up_atn_prefix, hf_up_atn_prefix);
-                }
+                // for tiny unet
+                std::string hf_up_atn_prefix = "up_blocks." + std::to_string(i) + ".attentions." + std::to_string(j) + ".";
+                std::string sd_up_atn_prefix = "output_blocks." + std::to_string(3 * i + j) + ".1.";
+                unet_conversion_map_layer.emplace_back(sd_up_atn_prefix, hf_up_atn_prefix);
             }
 
             if (i < 3) {
@@ -904,7 +903,7 @@ static bool is_diffusers_controlnet_name(const std::string& name) {
     return false;
 }
 
-std::string convert_diffusion_model_name(std::string name, std::string prefix, SDVersion version) {
+std::string convert_diffusion_model_name(std::string name, SDVersion version) {
     if (sd_version_is_sd1(version) || sd_version_is_sd2(version)) {
         name = convert_diffusers_unet_to_original_sd1(name);
     } else if (sd_version_is_sdxl(version)) {
@@ -1116,7 +1115,7 @@ std::string convert_diffusers_to_original_wan_vae(std::string name, bool qwen_im
     return name;
 }
 
-std::string convert_first_stage_model_name(std::string name, std::string prefix, SDVersion version) {
+std::string convert_first_stage_model_name(std::string name, SDVersion version) {
     if (sd_version_is_hunyuan_video(version) || sd_version_is_mage_flow(version) || sd_version_is_minimax_h3(version)) {
         return name;
     }
@@ -1581,7 +1580,7 @@ std::string convert_tensor_name(std::string name, SDVersion version) {
         bool matched = false;
         for (const auto& prefix : diffuison_model_prefix_vec) {
             if (starts_with(name, prefix)) {
-                name    = convert_diffusion_model_name(name.substr(prefix.size()), prefix, version);
+                name    = convert_diffusion_model_name(name.substr(prefix.size()), version);
                 name    = prefix + name;
                 matched = true;
                 break;
@@ -1593,7 +1592,7 @@ std::string convert_tensor_name(std::string name, SDVersion version) {
                 starts_with(name, "conv_out.") || starts_with(name, "time_embedding.") ||
                 starts_with(name, "conv_norm_out.")) {
                 const std::string& canonical_prefix = diffuison_model_prefix_vec.front();
-                name                                = convert_diffusion_model_name(name, canonical_prefix, version);
+                name                                = convert_diffusion_model_name(name, version);
                 name                                = canonical_prefix + name;
             }
         }
@@ -1603,7 +1602,7 @@ std::string convert_tensor_name(std::string name, SDVersion version) {
     {
         for (const auto& prefix : cond_stage_model_prefix_vec) {
             if (starts_with(name, prefix)) {
-                name = convert_cond_stage_model_name(name.substr(prefix.size()), prefix);
+                name = convert_cond_stage_model_name(name.substr(prefix.size()));
                 name = prefix + name;
                 break;
             }
@@ -1614,7 +1613,7 @@ std::string convert_tensor_name(std::string name, SDVersion version) {
     {
         for (const auto& prefix : first_stage_model_prefix_vec) {
             if (starts_with(name, prefix)) {
-                name = convert_first_stage_model_name(name.substr(prefix.size()), prefix, version);
+                name = convert_first_stage_model_name(name.substr(prefix.size()), version);
                 if (version == VERSION_SDXS_512_DS || version == VERSION_SDXS_09) {
                     name = "tae." + name;
                 } else {
