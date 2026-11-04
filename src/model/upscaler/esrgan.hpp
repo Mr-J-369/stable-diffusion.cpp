@@ -226,11 +226,11 @@ public:
         // upsample
         if (config.net_scale() >= 2) {
             auto conv_up1 = std::dynamic_pointer_cast<Conv2d>(blocks["conv_up1"]);
-            feat          = lrelu(ctx, conv_up1->forward(ctx, ggml_upscale(ctx->ggml_ctx, feat, 2, GGML_SCALE_MODE_NEAREST)));
+            feat          = lrelu(ctx, conv_up1->forward_upscale(ctx, feat, 2));
             sd::ggml_graph_cut::mark_graph_cut(feat, "esrgan.up1", "feat");
             if (config.net_scale() == 4) {
                 auto conv_up2 = std::dynamic_pointer_cast<Conv2d>(blocks["conv_up2"]);
-                feat          = lrelu(ctx, conv_up2->forward(ctx, ggml_upscale(ctx->ggml_ctx, feat, 2, GGML_SCALE_MODE_NEAREST)));
+                feat          = lrelu(ctx, conv_up2->forward_upscale(ctx, feat, 2));
                 sd::ggml_graph_cut::mark_graph_cut(feat, "esrgan.up2", "feat");
             }
         }

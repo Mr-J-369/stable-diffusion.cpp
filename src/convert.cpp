@@ -404,7 +404,7 @@ static bool export_loaded_model(ModelLoader& model_loader,
                                 int n_threads) {
     ggml_type type             = sd_type_to_ggml_type(output_type);
     bool output_is_safetensors = ends_with(output_path, ".safetensors");
-    TensorTypeRules type_rules = parse_tensor_type_rules(tensor_type_rules);
+    TensorTypeRules type_rules = parse_tensor_type_rules(tensor_type_rules ? tensor_type_rules : "");
 
     std::vector<TensorExportInfo> tensors;
     bool success = collect_tensors_for_export(model_loader, type, type_rules, tensors);
