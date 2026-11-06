@@ -802,11 +802,13 @@ std::optional<Tensor<float>> GGMLRunner::execute_graph(ggml_cgraph* graph, int n
     if (full_measurement.buffers.empty()) {
         return std::nullopt;
     }
-    auto manager         = residency_manager.lock();
-    const bool segmented = !is_multi_device() && !sd_backend_is_cpu(runtime_backend) &&
-                           manager != nullptr && manager->segmented_compute_enabled() &&
-                           plan.valid && plan.has_cuts && plan.segments.size() > 1 &&
-                           !fits(memory_requests(full_measurement.buffers, cache_.pending_bytes(graph)), params);
+    auto manager            = residency_manager.lock();
+    const char* low_ram_env = getenv("DIT_LOW_RAM");
+    const bool force_stream = low_ram_env == nullptr || (low_ram_env[0] != '0' && low_ram_env[0] != 'f' && low_ram_env[0] != 'n');
+    const bool segmented    = !is_multi_device() && !sd_backend_is_cpu(runtime_backend) &&
+                              manager != nullptr && manager->segmented_compute_enabled() &&
+                              plan.valid && plan.has_cuts && plan.segments.size() > 1 &&
+                              (force_stream || !fits(memory_requests(full_measurement.buffers, cache_.pending_bytes(graph)), params));
     if (!segmented) {
         ggml_graph_cut::Segment segment;
         segment.group_name          = "graph";

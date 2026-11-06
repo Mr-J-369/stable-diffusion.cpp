@@ -1168,49 +1168,71 @@ bool ModelLoader::load_tensors(on_new_tensor_cb_t on_new_tensor_cb,
                         return true;
                     };
 
-                    char* read_buf    = nullptr;
-                    char* target_buf  = nullptr;
-                    char* convert_buf = nullptr;
-                    if (dst_tensor->buffer == nullptr || ggml_backend_buffer_is_host(dst_tensor->buffer)) {
-                        if (tensor_storage.type == dst_tensor->type) {
-                            GGML_ASSERT(ggml_nbytes(dst_tensor) == tensor_storage.nbytes());
-                            if (tensor_storage.is_f64 || tensor_storage.is_i64) {
-                                read_buffer.resize(tensor_storage.nbytes_to_read());
-                                read_buf = (char*)read_buffer.data();
-                            } else {
-                                read_buf = (char*)dst_tensor->data;
-                            }
-                            target_buf = (char*)dst_tensor->data;
+                    char* read_buf          = nullptr;
+                    const void* target_buf  = nullptr;
+                    const void* convert_buf = nullptr;
+                    const bool is_host_dst  = dst_tensor->buffer == nullptr || ggml_backend_buffer_is_host(dst_tensor->buffer);
+                    const bool can_zero_copy_mmap =
+                        zip == nullptr && mmapped != nullptr && !tensor_storage.is_f64 && !tensor_storage.is_i64 &&
+                        (!is_host_dst || tensor_storage.type != dst_tensor->type);
+
+                    if (can_zero_copy_mmap) {
+                        if (tensor_storage.offset >= mmapped->size() || nbytes_to_read > mmapped->size() - tensor_storage.offset) {
+                            LOG_ERROR("read tensor data failed: '%s'", file_path.c_str());
+                            failed = true;
+                            break;
+                        }
+                        target_buf = mmapped->data() + tensor_storage.offset;
+                        if (is_host_dst) {
+                            convert_buf = dst_tensor->data;
+                        } else if (tensor_storage.type != dst_tensor->type) {
+                            convert_buffer.resize(ggml_nbytes(dst_tensor));
+                            convert_buf = convert_buffer.data();
                         } else {
-                            read_buffer.resize(std::max(tensor_storage.nbytes(), tensor_storage.nbytes_to_read()));
-                            read_buf    = (char*)read_buffer.data();
-                            target_buf  = read_buf;
-                            convert_buf = (char*)dst_tensor->data;
+                            convert_buf = target_buf;
                         }
                     } else {
-                        read_buffer.resize(std::max(tensor_storage.nbytes(), tensor_storage.nbytes_to_read()));
-                        read_buf   = (char*)read_buffer.data();
-                        target_buf = read_buf;
+                        if (is_host_dst) {
+                            if (tensor_storage.type == dst_tensor->type) {
+                                GGML_ASSERT(ggml_nbytes(dst_tensor) == tensor_storage.nbytes());
+                                if (tensor_storage.is_f64 || tensor_storage.is_i64) {
+                                    read_buffer.resize(tensor_storage.nbytes_to_read());
+                                    read_buf = (char*)read_buffer.data();
+                                } else {
+                                    read_buf = (char*)dst_tensor->data;
+                                }
+                                target_buf = dst_tensor->data;
+                            } else {
+                                read_buffer.resize(std::max(tensor_storage.nbytes(), tensor_storage.nbytes_to_read()));
+                                read_buf    = (char*)read_buffer.data();
+                                target_buf  = read_buf;
+                                convert_buf = dst_tensor->data;
+                            }
+                        } else {
+                            read_buffer.resize(std::max(tensor_storage.nbytes(), tensor_storage.nbytes_to_read()));
+                            read_buf   = (char*)read_buffer.data();
+                            target_buf = read_buf;
 
-                        if (tensor_storage.type != dst_tensor->type) {
-                            convert_buffer.resize(ggml_nbytes(dst_tensor));
-                            convert_buf = (char*)convert_buffer.data();
+                            if (tensor_storage.type != dst_tensor->type) {
+                                convert_buffer.resize(ggml_nbytes(dst_tensor));
+                                convert_buf = convert_buffer.data();
+                            }
                         }
-                    }
 
-                    t0 = ggml_time_ms();
-                    if (!read_data(read_buf, nbytes_to_read)) {
-                        failed = true;
-                        break;
+                        t0 = ggml_time_ms();
+                        if (!read_data(read_buf, nbytes_to_read)) {
+                            failed = true;
+                            break;
+                        }
+                        t1 = ggml_time_ms();
+                        read_time_ms.fetch_add(t1 - t0);
                     }
-                    t1 = ggml_time_ms();
-                    read_time_ms.fetch_add(t1 - t0);
 
                     t0 = ggml_time_ms();
                     if (tensor_storage.is_f64) {
-                        f64_to_f32_vec((double*)read_buf, (float*)target_buf, tensor_storage.nelements());
+                        f64_to_f32_vec((double*)read_buf, (float*)const_cast<void*>(target_buf), tensor_storage.nelements());
                     } else if (tensor_storage.is_i64) {
-                        i64_to_i32_vec((int64_t*)read_buf, (int32_t*)target_buf, tensor_storage.nelements());
+                        i64_to_i32_vec((int64_t*)read_buf, (int32_t*)const_cast<void*>(target_buf), tensor_storage.nelements());
                     }
                     if (tensor_storage.type != dst_tensor->type) {
                         if (convert_buf == nullptr) {
@@ -1220,20 +1242,20 @@ bool ModelLoader::load_tensors(on_new_tensor_cb_t on_new_tensor_cb,
                         }
                         std::string processed_name = convert_tensor_name(tensor_storage.name, imatrix_version);
                         std::vector<float> imatrix = get_imatrix_collector().get_values(processed_name);
-                        convert_tensor((void*)target_buf,
+                        convert_tensor(const_cast<void*>(target_buf),
                                        tensor_storage.type,
-                                       convert_buf,
+                                       const_cast<void*>(convert_buf),
                                        dst_tensor->type,
                                        (int)tensor_storage.nelements() / (int)tensor_storage.ne[0],
                                        (int)tensor_storage.ne[0],
                                        std::move(imatrix));
-                    } else {
+                    } else if (!can_zero_copy_mmap) {
                         convert_buf = read_buf;
                     }
                     t1 = ggml_time_ms();
                     convert_time_ms.fetch_add(t1 - t0);
 
-                    if (dst_tensor->buffer != nullptr && !ggml_backend_buffer_is_host(dst_tensor->buffer)) {
+                    if (!is_host_dst) {
                         t0 = ggml_time_ms();
 
                         std::lock_guard<std::mutex> lock(backend_tensor_set_mutex);
@@ -1241,6 +1263,10 @@ bool ModelLoader::load_tensors(on_new_tensor_cb_t on_new_tensor_cb,
 
                         t1 = ggml_time_ms();
                         copy_to_backend_time_ms.fetch_add(t1 - t0);
+                    }
+
+                    if (mmapped != nullptr && zip == nullptr) {
+                        mmapped->evict_pages(tensor_storage.offset, nbytes_to_read);
                     }
 
                     bytes_processed.fetch_add((uint64_t)nbytes_to_read);

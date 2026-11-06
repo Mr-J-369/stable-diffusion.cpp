@@ -215,6 +215,31 @@ public:
     MmapWrapperImpl(void* data, size_t size, int fd)
         : MmapWrapper(data, size), fd_(fd) {}
 
+    void evict_pages(size_t offset, size_t n) const override {
+#ifdef __linux__
+        if (data_ == nullptr || offset >= size_ || n == 0) {
+            return;
+        }
+        const size_t clamped_end = std::min(size_, offset + n);
+        static const size_t page_size = []() {
+            const long ps = sysconf(_SC_PAGESIZE);
+            return ps > 0 ? static_cast<size_t>(ps) : static_cast<size_t>(4096);
+        }();
+        // Align start up and end down to page boundaries (or align end to size_ if at EOF)
+        // so we never evict a page that spans an adjacent unread tensor.
+        const size_t aligned_start = (offset + page_size - 1) & ~(page_size - 1);
+        const size_t aligned_end   = (clamped_end == size_) ? size_ : (clamped_end & ~(page_size - 1));
+        if (aligned_end > aligned_start) {
+            const size_t len = aligned_end - aligned_start;
+            madvise(static_cast<uint8_t*>(data_) + aligned_start, len, MADV_DONTNEED);
+            posix_fadvise(fd_, static_cast<off_t>(aligned_start), static_cast<off_t>(len), POSIX_FADV_DONTNEED);
+        }
+#else
+        SD_UNUSED(offset);
+        SD_UNUSED(n);
+#endif
+    }
+
     ~MmapWrapperImpl() override {
 #ifdef __linux__
         auto cfg_flags = get_mmap_flags();

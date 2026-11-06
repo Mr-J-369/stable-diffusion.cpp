@@ -1,7 +1,9 @@
 #include "core/segment_weight_pipeline.h"
 
+#include <cstdlib>
 #include <utility>
 
+#include "core/ggml_extend_backend.h"
 #include "core/ggml_graph_cut.h"
 #include "device_residency_manager.h"
 
@@ -29,6 +31,11 @@ namespace sd {
           compute_backend_(compute_backend),
           owner_id_(owner_id),
           enabled_(enabled && residency_manager != nullptr) {
+        low_ram_mode_ = false;
+        const char* low_ram_env = getenv("DIT_LOW_RAM");
+        if (low_ram_env && (low_ram_env[0] == '1' || low_ram_env[0] == 't' || low_ram_env[0] == 'y')) {
+            low_ram_mode_ = true;
+        }
         segment_params_.resize(plan.segments.size());
         for (size_t segment_index = 0; segment_index < plan.segments.size(); ++segment_index) {
             std::unordered_set<ggml_tensor*> seen;
@@ -56,8 +63,30 @@ namespace sd {
         return SIZE_MAX;
     }
 
-    std::vector<std::vector<ggml_tensor*>> SegmentWeightPipeline::preferred_eviction_order() const {
-        return {segment_params_.rbegin(), segment_params_.rend()};
+    std::vector<std::vector<ggml_tensor*>> SegmentWeightPipeline::preferred_eviction_order(size_t segment_index) const {
+        std::vector<std::vector<ggml_tensor*>> order;
+        const size_t total = segment_params_.size();
+        if (total == 0) {
+            return order;
+        }
+        order.reserve(total);
+        // 1. Evict leftover tail segments from previous step first (highest index down)
+        if (segment_index + 1 < total) {
+            for (size_t idx = total; idx > segment_index + 1; --idx) {
+                if (!segment_params_[idx - 1].empty()) {
+                    order.push_back(segment_params_[idx - 1]);
+                }
+            }
+        }
+        // 2. Evict already executed segments in current step (from just-executed down towards prefix 0)
+        if (segment_index > 0) {
+            for (size_t idx = segment_index; idx > 0; --idx) {
+                if (!segment_params_[idx - 1].empty()) {
+                    order.push_back(segment_params_[idx - 1]);
+                }
+            }
+        }
+        return order;
     }
 
     void SegmentWeightPipeline::disable() {
@@ -92,9 +121,10 @@ namespace sd {
         }
         std::vector<ggml_tensor*> protected_params = segment_params_[segment_index];
         protected_params.insert(protected_params.end(), queued_params_.begin(), queued_params_.end());
+        const auto eviction_order = preferred_eviction_order(segment_index);
         for (const auto& request : requests) {
             if (!manager->ensure_compute_backend_capacity(request, segment_params_[segment_index],
-                                                          preferred_eviction_order(), protected_params)) {
+                                                          eviction_order, protected_params)) {
                 return false;
             }
         }
@@ -121,6 +151,9 @@ namespace sd {
     void SegmentWeightPipeline::segment_end() {
         if (auto manager = residency_manager_.lock()) {
             manager->release_compute_backend_params(pinned_params_);
+            if (low_ram_mode_ && !pinned_params_.empty()) {
+                manager->evict_compute_backend_params(pinned_params_);
+            }
         }
         pinned_params_.clear();
     }
@@ -171,9 +204,10 @@ namespace sd {
         backend_request.owner_id                   = owner_id_;
         std::vector<ggml_tensor*> protected_params = segment_params_[segment_index];
         protected_params.insert(protected_params.end(), params.begin(), params.end());
+        const auto eviction_order = preferred_eviction_order(next_segment);
         if (!manager->ensure_compute_backend_capacity(backend_request,
                                                       params,
-                                                      preferred_eviction_order(),
+                                                      eviction_order,
                                                       protected_params)) {
             disable();
             return;

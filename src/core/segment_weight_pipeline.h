@@ -30,9 +30,10 @@ namespace sd {
         std::vector<ggml_tensor*> pinned_params_;
         size_t queued_segment_ = SIZE_MAX;
         bool enabled_          = true;
+        bool low_ram_mode_     = false;
 
         size_t next_parameter_segment(size_t segment_index) const;
-        std::vector<std::vector<ggml_tensor*>> preferred_eviction_order() const;
+        std::vector<std::vector<ggml_tensor*>> preferred_eviction_order(size_t segment_index) const;
         void disable();
         void activate(size_t segment_index);
         void clear();
