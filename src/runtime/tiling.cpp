@@ -235,9 +235,12 @@ sd::Tensor<float> process_tiles_2d(const sd::Tensor<float>& input,
             int overlap_y_out = decode ? tile_overlap_y * scale : tile_overlap_y;
 
             int64_t t1       = ggml_time_ms();
+            if (sd_is_cancel_requested()) {
+                return {};
+            }
             auto input_tile  = sd_tensor_split_2d(input, input_tile_size_x, input_tile_size_y, x_in, y_in);
             auto output_tile = on_processing(input_tile);
-            if (output_tile.empty()) {
+            if (output_tile.empty() || sd_is_cancel_requested()) {
                 return {};
             }
             GGML_ASSERT(output_tile.shape()[0] == output_tile_size_x && output_tile.shape()[1] == output_tile_size_y);

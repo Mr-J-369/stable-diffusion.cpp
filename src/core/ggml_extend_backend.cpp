@@ -446,6 +446,22 @@ bool sd_backend_cpu_set_n_threads(ggml_backend_t backend, int n_threads) {
     return false;
 }
 
+bool sd_backend_cpu_set_abort_callback(ggml_backend_t backend, ggml_abort_callback abort_cb, void* user_data) {
+    if (backend == nullptr) {
+        return false;
+    }
+    auto dev = ggml_backend_get_device(backend);
+    if (dev != nullptr && ggml_backend_dev_type(dev) == GGML_BACKEND_DEVICE_TYPE_CPU) {
+        auto reg                                = ggml_backend_dev_backend_reg(dev);
+        auto ggml_backend_set_abort_callback_fn = (ggml_backend_set_abort_callback_t)ggml_backend_reg_get_proc_address(reg, "ggml_backend_set_abort_callback");
+        if (ggml_backend_set_abort_callback_fn != nullptr) {
+            ggml_backend_set_abort_callback_fn(backend, abort_cb, user_data);
+            return true;
+        }
+    }
+    return false;
+}
+
 static ggml_cgraph sd_ggml_graph_view(ggml_cgraph* cgraph0, int i0, int i1) {
     ggml_cgraph cgraph = {
         /*.size             =*/0,
@@ -467,6 +483,9 @@ ggml_status sd_backend_graph_compute_with_eval_callback(ggml_backend_t backend,
                                                         ggml_cgraph* gf,
                                                         sd_graph_eval_callback_t callback_eval,
                                                         void* callback_eval_user_data) {
+    if (sd_is_cancel_requested()) {
+        return GGML_STATUS_ABORTED;
+    }
     if (callback_eval == nullptr) {
         return ggml_backend_graph_compute(backend, gf);
     }
@@ -476,6 +495,10 @@ ggml_status sd_backend_graph_compute_with_eval_callback(ggml_backend_t backend,
     bool stopped       = false;
 
     for (int j0 = 0; j0 < n_nodes; ++j0) {
+        if (sd_is_cancel_requested()) {
+            stopped = true;
+            break;
+        }
         ggml_tensor* t = ggml_graph_node(gf, j0);
         bool need      = callback_eval(t, true, callback_eval_user_data);
         int j1         = j0;
@@ -502,7 +525,7 @@ ggml_status sd_backend_graph_compute_with_eval_callback(ggml_backend_t backend,
     }
 
     ggml_backend_synchronize(backend);
-    if (stopped && status == GGML_STATUS_SUCCESS) {
+    if ((stopped || sd_is_cancel_requested()) && status == GGML_STATUS_SUCCESS) {
         status = GGML_STATUS_ABORTED;
     }
     return status;

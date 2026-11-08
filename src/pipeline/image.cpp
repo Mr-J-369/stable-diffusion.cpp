@@ -273,6 +273,9 @@ namespace sd::pipeline {
 
         std::vector<sd::Tensor<float>> ref_latents;
         for (size_t i = 0; i < ref_images.size(); i++) {
+            if (sd->get_cancel_flag() == SD_CANCEL_ALL) {
+                return std::nullopt;
+            }
             if (sd->version == VERSION_HIDREAM_O1) {
                 continue;
             }
@@ -316,8 +319,10 @@ namespace sd::pipeline {
             } else {
                 ref_latent = sd->encode_first_stage(ref_images[i]);
             }
-            if (ref_latent.empty()) {
-                LOG_ERROR("failed to encode reference image %d", static_cast<int>(i));
+            if (ref_latent.empty() || sd->get_cancel_flag() == SD_CANCEL_ALL) {
+                if (sd->get_cancel_flag() != SD_CANCEL_ALL) {
+                    LOG_ERROR("failed to encode reference image %d", static_cast<int>(i));
+                }
                 return std::nullopt;
             }
 
@@ -438,10 +443,16 @@ namespace sd::pipeline {
                                           condition_params,
                                           plan->total_steps);
         sd->compute_ip_adapter_tokens(sd_img_gen_params->ip_adapter_image, sd_img_gen_params->ip_adapter_strength);
+        if (sd->get_cancel_flag() == SD_CANCEL_ALL) {
+            return std::nullopt;
+        }
         int64_t prepare_start_ms         = ggml_time_ms();
         condition_params.zero_out_masked = false;
         auto cond                        = sd->cond_stage_model->get_learned_condition(sd->n_threads,
                                                                                        condition_params);
+        if (sd->get_cancel_flag() == SD_CANCEL_ALL || cond.empty()) {
+            return std::nullopt;
+        }
         if (cond.c_concat.empty() && ref_image_params.pass_to_dit) {
             cond.c_concat = latents->concat_latent;  // TODO: optimize
         }
@@ -452,6 +463,9 @@ namespace sd::pipeline {
 
         SDCondition uncond;
         if (request->use_uncond || request->use_high_noise_uncond) {
+            if (sd->get_cancel_flag() == SD_CANCEL_ALL) {
+                return std::nullopt;
+            }
             if (sd_version_is_ideogram4(sd->version)) {
                 uncond.c_vector = sd::Tensor<float>::from_vector({1.0f});
             } else if (sd_version_is_minit2i(sd->version)) {
@@ -470,6 +484,9 @@ namespace sd::pipeline {
                 condition_params.zero_out_masked = zero_out_masked;
                 uncond                           = sd->cond_stage_model->get_learned_condition(sd->n_threads,
                                                                                                condition_params);
+                if (sd->get_cancel_flag() == SD_CANCEL_ALL || uncond.empty()) {
+                    return std::nullopt;
+                }
             }
             if (uncond.c_concat.empty() && ref_image_params.pass_to_dit) {
                 uncond.c_concat = latents->concat_latent;  // TODO: optimize
@@ -478,6 +495,9 @@ namespace sd::pipeline {
 
         SDCondition img_uncond;
         if (request->use_img_uncond) {
+            if (sd->get_cancel_flag() == SD_CANCEL_ALL) {
+                return std::nullopt;
+            }
             if ((request->use_uncond || request->use_high_noise_uncond) && (latents->ref_images.empty() || !use_ref_latent_img_cfg)) {
                 img_uncond = SDCondition(uncond.c_crossattn, uncond.c_vector, latents->img_uncond_concat_latent);
             } else {
@@ -495,6 +515,9 @@ namespace sd::pipeline {
                 }
                 img_uncond = sd->cond_stage_model->get_learned_condition(sd->n_threads,
                                                                          condition_params);
+                if (sd->get_cancel_flag() == SD_CANCEL_ALL || img_uncond.empty()) {
+                    return std::nullopt;
+                }
                 if (img_uncond.c_concat.empty() && ref_image_params.pass_to_dit) {
                     img_uncond.c_concat = latents->img_uncond_concat_latent;  // TODO: optimize
                 }

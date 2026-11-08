@@ -724,19 +724,31 @@ bool GGMLRunner::fits(const std::vector<DeviceMemoryRequest>& requests,
 }
 
 bool GGMLRunner::execute_segment(ggml_cgraph* graph, int n_threads) {
+    if (sd_is_cancel_requested()) {
+        return false;
+    }
+    auto cpu_abort_cb = +[](void*) -> bool {
+        return sd_is_cancel_requested();
+    };
     if (sd_backend_is_cpu(runtime_backend)) {
         sd_backend_cpu_set_n_threads(runtime_backend, n_threads);
+        sd_backend_cpu_set_abort_callback(runtime_backend, cpu_abort_cb, nullptr);
     }
     if (workspace_.cpu_backend() != nullptr) {
         sd_backend_cpu_set_n_threads(workspace_.cpu_backend(), n_threads);
+        sd_backend_cpu_set_abort_callback(workspace_.cpu_backend(), cpu_abort_cb, nullptr);
     }
     auto scheduler = workspace_.scheduler();
     ggml_status status;
     if (scheduler != nullptr) {
-        if (sd_get_backend_eval_callback() != nullptr && !multi_device_eval_callback_warned) {
-            LOG_WARN("%s: eval callback is not supported with the backend scheduler; ignoring", get_desc().c_str());
-            multi_device_eval_callback_warned = true;
-        }
+        auto sched_eval_cb = +[](struct ggml_tensor* t, bool ask, void*) -> bool {
+            if (sd_is_cancel_requested()) {
+                return ask;
+            }
+            auto user_cb = sd_get_backend_eval_callback();
+            return user_cb != nullptr ? user_cb(t, ask, sd_get_backend_eval_callback_data()) : false;
+        };
+        ggml_backend_sched_set_eval_callback(scheduler, sched_eval_cb, nullptr);
         status = ggml_backend_sched_graph_compute(scheduler, graph);
     } else {
         status = sd_backend_graph_compute_with_eval_callback(runtime_backend, graph,
@@ -745,7 +757,12 @@ bool GGMLRunner::execute_segment(ggml_cgraph* graph, int n_threads) {
     }
     workspace_.synchronize();
     if (status != GGML_STATUS_SUCCESS) {
-        LOG_ERROR("%s compute failed: %s", get_desc().c_str(), ggml_status_to_string(status));
+        if (status != GGML_STATUS_ABORTED && !sd_is_cancel_requested()) {
+            LOG_ERROR("%s compute failed: %s", get_desc().c_str(), ggml_status_to_string(status));
+        }
+        return false;
+    }
+    if (sd_is_cancel_requested()) {
         return false;
     }
     const std::string description = get_desc();
@@ -790,6 +807,9 @@ bool GGMLRunner::execute_segment(ggml_cgraph* graph, int n_threads) {
 }
 
 std::optional<Tensor<float>> GGMLRunner::execute_graph(ggml_cgraph* graph, int n_threads, bool no_return, const std::function<bool()>& read_outputs) {
+    if (sd_is_cancel_requested()) {
+        return std::nullopt;
+    }
     if (!assign_graph_cut_layer_split_backends(graph)) {
         return std::nullopt;
     }
@@ -846,11 +866,16 @@ std::optional<Tensor<float>> GGMLRunner::execute_graph(ggml_cgraph* graph, int n
     };
     std::optional<Tensor<float>> output = Tensor<float>();
     for (size_t index = 0; index < plan.segments.size(); ++index) {
+        if (sd_is_cancel_requested()) {
+            return std::nullopt;
+        }
         const auto& segment = plan.segments[index];
         const bool last     = index + 1 == plan.segments.size();
         auto fail_segment   = [&](const char* phase) {
-            LOG_ERROR("%s segment %zu/%zu (%s) failed during %s", get_desc().c_str(),
-                        index + 1, plan.segments.size(), segment.group_name.c_str(), phase);
+            if (!sd_is_cancel_requested()) {
+                LOG_ERROR("%s segment %zu/%zu (%s) failed during %s", get_desc().c_str(),
+                            index + 1, plan.segments.size(), segment.group_name.c_str(), phase);
+            }
             return std::nullopt;
         };
         cut_cache_.prune(segment.live_cut_names);
@@ -894,6 +919,9 @@ std::optional<Tensor<float>> GGMLRunner::execute_graph(ggml_cgraph* graph, int n
         if (!weights.segment_start(index, ensure_capacity)) {
             return fail_segment("weight preparation");
         }
+        if (sd_is_cancel_requested()) {
+            return std::nullopt;
+        }
         // Preparing weights can execute LoRA graphs and reclaim an idle workspace.
         if (!workspace_.measurement_matches(segment_graph, measurement)) {
             measurement = measure(segment_graph, segment.compute_buffer_size);
@@ -916,6 +944,9 @@ std::optional<Tensor<float>> GGMLRunner::execute_graph(ggml_cgraph* graph, int n
             return fail_segment("allocated capacity check");
         }
         copy_data_to_backend_tensor(segment_graph, false);
+        if (sd_is_cancel_requested()) {
+            return std::nullopt;
+        }
         auto prefetch_requests = memory_requests(measurement.buffers, new_cache_bytes);
         if (!prefetch_requests.empty()) {
             weights.enqueue_next(index, prefetch_requests.front());

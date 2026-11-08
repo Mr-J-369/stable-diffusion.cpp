@@ -306,6 +306,7 @@ ggml_backend_t StableDiffusionGGML::params_backend_for(SDBackendModule module) {
 
 void StableDiffusionGGML::set_cancel_flag(enum sd_cancel_mode_t flag) {
     cancellation_flag.store(flag, std::memory_order_release);
+    sd_set_cancel_requested(flag == SD_CANCEL_ALL);
 }
 
 void StableDiffusionGGML::reset_cancel_flag() {
@@ -2401,7 +2402,7 @@ sd::Tensor<float> StableDiffusionGGML::sample(const std::shared_ptr<DiffusionMod
         }
 
         cond_out = run_condition(*positive_condition, c_concat_override);
-        if (cond_out.empty()) {
+        if (cond_out.empty() || get_cancel_flag() == SD_CANCEL_ALL) {
             return {};
         }
 
@@ -2426,7 +2427,7 @@ sd::Tensor<float> StableDiffusionGGML::sample(const std::shared_ptr<DiffusionMod
                                        uncond_skip_layers,
                                        nullptr,
                                        true);
-            if (uncond_out.empty()) {
+            if (uncond_out.empty() || get_cancel_flag() == SD_CANCEL_ALL) {
                 return {};
             }
         }
@@ -2436,7 +2437,7 @@ sd::Tensor<float> StableDiffusionGGML::sample(const std::shared_ptr<DiffusionMod
                                            nullptr,
                                            uncond_without_ref_latents ? &empty_ref_latents : nullptr,
                                            true);
-            if (img_uncond_out.empty()) {
+            if (img_uncond_out.empty() || get_cancel_flag() == SD_CANCEL_ALL) {
                 return {};
             }
         }
@@ -2464,7 +2465,7 @@ sd::Tensor<float> StableDiffusionGGML::sample(const std::shared_ptr<DiffusionMod
         }
 
         guided = skip_layer_guidance.forward(guidance_input, std::move(guided));
-        if (guided.pred.empty()) {
+        if (guided.pred.empty() || get_cancel_flag() == SD_CANCEL_ALL) {
             return {};
         }
 
@@ -2483,7 +2484,7 @@ sd::Tensor<float> StableDiffusionGGML::sample(const std::shared_ptr<DiffusionMod
         if (!denoise_mask.empty()) {
             denoised = denoised * denoise_mask + sampling_init_latent * (1.0f - denoise_mask);
         }
-        if (preview_needed && sd_should_preview_denoised()) {
+        if (preview_needed && sd_should_preview_denoised() && get_cancel_flag() != SD_CANCEL_ALL) {
             preview_image(step, denoised, version, preview.mode, preview.callback, preview.data, false);
         }
         report_sample_progress(step, steps, terminal_sigma_is_zero, &last_progress_us);

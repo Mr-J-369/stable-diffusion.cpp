@@ -152,6 +152,9 @@ bool ModelManager::populate_prefetch_block(PrefetchBlock& block) {
     std::vector<TensorState*> chunk;
     size_t chunk_size = 0;
     for (TensorState* state : block.states) {
+        if (sd_is_cancel_requested()) {
+            return false;
+        }
         const size_t tensor_size = GGML_PAD(
             ggml_backend_buft_get_alloc_size(buffer_type, state->tensor), alignment);
         if (!chunk.empty() && backend_limit > 0 &&
@@ -165,7 +168,7 @@ bool ModelManager::populate_prefetch_block(PrefetchBlock& block) {
         chunk.push_back(state);
         chunk_size = tensor_size > SIZE_MAX - chunk_size ? SIZE_MAX : chunk_size + tensor_size;
     }
-    if (!enqueue_chunk(chunk)) {
+    if (sd_is_cancel_requested() || !enqueue_chunk(chunk)) {
         return false;
     }
 

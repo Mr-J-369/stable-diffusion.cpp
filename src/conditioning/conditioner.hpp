@@ -475,7 +475,9 @@ struct FrozenCLIPEmbedderWithCustomWords : public Conditioner {
                                                                false,
                                                                clip_skip,
                                                                false);
-                GGML_ASSERT(!chunk_hidden_states.empty());
+                if (chunk_hidden_states.empty()) {
+                    return {};
+                }
                 if (sd_version_is_sdxl(version)) {
                     auto chunk_hidden_states2 = text_model2->compute(n_threads,
                                                                      input_ids2,
@@ -485,7 +487,9 @@ struct FrozenCLIPEmbedderWithCustomWords : public Conditioner {
                                                                      false,
                                                                      clip_skip,
                                                                      false);
-                    GGML_ASSERT(!chunk_hidden_states2.empty());
+                    if (chunk_hidden_states2.empty()) {
+                        return {};
+                    }
                     chunk_hidden_states = sd::ops::concat(chunk_hidden_states, chunk_hidden_states2, 0);
 
                     if (chunk_idx == 0) {
@@ -497,7 +501,9 @@ struct FrozenCLIPEmbedderWithCustomWords : public Conditioner {
                                                       true,
                                                       clip_skip,
                                                       false);
-                        GGML_ASSERT(!pooled.empty());
+                        if (pooled.empty()) {
+                            return {};
+                        }
                     }
                 }
                 int64_t t1 = ggml_time_ms();
@@ -877,7 +883,9 @@ struct SD3CLIPEmbedder : public Conditioner {
                                                         false,
                                                         clip_skip,
                                                         false);
-                GGML_ASSERT(!chunk_hidden_states_l.empty());
+                if (chunk_hidden_states_l.empty()) {
+                    return {};
+                }
                 chunk_hidden_states_l = ::apply_token_weights(std::move(chunk_hidden_states_l), chunk_weights);
 
                 if (chunk_idx == 0) {
@@ -891,7 +899,9 @@ struct SD3CLIPEmbedder : public Conditioner {
                                                     true,
                                                     clip_skip,
                                                     false);
-                    GGML_ASSERT(!pooled_l.empty());
+                    if (pooled_l.empty()) {
+                        return {};
+                    }
                 }
             } else {
                 chunk_hidden_states_l = sd::Tensor<float>::zeros({768, static_cast<int64_t>(chunk_len), 1});
@@ -920,7 +930,9 @@ struct SD3CLIPEmbedder : public Conditioner {
                                                         false,
                                                         clip_skip,
                                                         false);
-                GGML_ASSERT(!chunk_hidden_states_g.empty());
+                if (chunk_hidden_states_g.empty()) {
+                    return {};
+                }
                 chunk_hidden_states_g = ::apply_token_weights(std::move(chunk_hidden_states_g), chunk_weights);
 
                 if (chunk_idx == 0) {
@@ -934,7 +946,9 @@ struct SD3CLIPEmbedder : public Conditioner {
                                                     true,
                                                     clip_skip,
                                                     false);
-                    GGML_ASSERT(!pooled_g.empty());
+                    if (pooled_g.empty()) {
+                        return {};
+                    }
                 }
             } else {
                 chunk_hidden_states_g = sd::Tensor<float>::zeros({1280, static_cast<int64_t>(chunk_len), 1});
@@ -957,7 +971,9 @@ struct SD3CLIPEmbedder : public Conditioner {
                                                      input_ids,
                                                      sd::Tensor<float>(),
                                                      false);
-                GGML_ASSERT(!chunk_hidden_states_t5.empty());
+                if (chunk_hidden_states_t5.empty()) {
+                    return {};
+                }
                 chunk_hidden_states_t5 = ::apply_token_weights(std::move(chunk_hidden_states_t5), chunk_weights);
             } else {
                 chunk_hidden_states_t5 = sd::Tensor<float>::zeros({4096, static_cast<int64_t>(chunk_len), 1});
@@ -1224,7 +1240,9 @@ struct FluxCLIPEmbedder : public Conditioner {
                                              true,
                                              clip_skip,
                                              false);
-                    GGML_ASSERT(!pooled.empty());
+                    if (pooled.empty()) {
+                        return {};
+                    }
                 } else {
                     pooled = sd::Tensor<float>::zeros({768});
                 }
@@ -1243,7 +1261,9 @@ struct FluxCLIPEmbedder : public Conditioner {
                                                   input_ids,
                                                   sd::Tensor<float>(),
                                                   false);
-                GGML_ASSERT(!chunk_hidden_states.empty());
+                if (chunk_hidden_states.empty()) {
+                    return {};
+                }
                 chunk_hidden_states = ::apply_token_weights(std::move(chunk_hidden_states), chunk_weights);
                 if (zero_out_masked) {
                     chunk_hidden_states.fill_(0.0f);
@@ -1475,7 +1495,9 @@ struct T5CLIPEmbedder : public Conditioner {
                                                    input_ids,
                                                    t5_attn_mask_chunk,
                                                    false);
-            GGML_ASSERT(!chunk_hidden_states.empty());
+            if (chunk_hidden_states.empty()) {
+                return {};
+            }
             chunk_hidden_states = apply_token_weights(std::move(chunk_hidden_states), chunk_weights);
 
             if (zero_out_masked) {
@@ -1616,7 +1638,9 @@ struct MiniT2IConditioner : public Conditioner {
                                                       input_ids,
                                                       sd::Tensor<float>::from_vector(t5_mask),
                                                       false);
-        GGML_ASSERT(!hidden_states.empty());
+        if (hidden_states.empty()) {
+            return {};
+        }
         result.c_crossattn = std::move(hidden_states);
         result.c_vector    = sd::Tensor<float>::from_vector(mask);
         return result;
@@ -1740,7 +1764,9 @@ struct AnimaConditioner : public Conditioner {
                                           {},
                                           false,
                                           false);
-        GGML_ASSERT(!hidden_states.empty());
+        if (hidden_states.empty()) {
+            return {};
+        }
         hidden_states         = apply_token_weights(std::move(hidden_states), qwen_weights);
         auto t5_ids_tensor    = sd::Tensor<int32_t>::from_vector(t5_tokens);
         auto t5_weight_tensor = sd::Tensor<float>::from_vector(t5_weights);
@@ -2020,7 +2046,9 @@ struct LLMEmbedder : public Conditioner {
                                           deepstack_image_embeds,
                                           image_grids,
                                           position_ids);
-        GGML_ASSERT(!hidden_states.empty());
+        if (hidden_states.empty()) {
+            return {};
+        }
         hidden_states = apply_token_weights(std::move(hidden_states), weights);
         GGML_ASSERT(hidden_states.shape()[1] > prompt_template_encode_start_idx);
 
@@ -2317,7 +2345,9 @@ struct LLMEmbedder : public Conditioner {
                     LOG_VERBOSE("resize LingBotVideo ref image %d from %dx%d to %dx%d", i, height, width, h_bar, w_bar);
                     auto resized_image = clip_preprocess(image, w_bar, h_bar);
                     auto image_embed   = llm->encode_image(n_threads, resized_image, false);
-                    GGML_ASSERT(!image_embed.empty());
+                    if (image_embed.empty()) {
+                        return {};
+                    }
 
                     std::string image_prefix = prompt + img_prompt + "<|vision_start|>";
                     int image_embed_idx      = static_cast<int>(tokenizer->encode(image_prefix, nullptr).size());
@@ -2431,7 +2461,9 @@ struct LLMEmbedder : public Conditioner {
                     auto resized_image = clip_preprocess(image, w_bar, h_bar);
 
                     auto image_embed = llm->encode_image(n_threads, resized_image, false);
-                    GGML_ASSERT(!image_embed.empty());
+                    if (image_embed.empty()) {
+                        return {};
+                    }
                     image_embeds.emplace_back(image_embed_idx, image_embed);
                     image_embed_idx += 1 + static_cast<int>(image_embed.shape()[1]) + 6;
 
@@ -2514,7 +2546,9 @@ struct LLMEmbedder : public Conditioner {
 
                     auto resized_image = clip_preprocess(image, w_bar, h_bar);
                     auto image_embed   = llm->encode_image(n_threads, resized_image, false);
-                    GGML_ASSERT(!image_embed.empty());
+                    if (image_embed.empty()) {
+                        return {};
+                    }
 
                     std::string image_prefix = prompt_prefix + img_prompt + "<|vision_start|>";
                     int image_embed_idx      = static_cast<int>(tokenizer->encode(image_prefix, nullptr).size());
@@ -2582,7 +2616,9 @@ struct LLMEmbedder : public Conditioner {
 
                     auto resized_image = clip_preprocess(image, w_bar, h_bar);
                     auto image_embed   = llm->encode_image(n_threads, resized_image, false);
-                    GGML_ASSERT(!image_embed.empty());
+                    if (image_embed.empty()) {
+                        return {};
+                    }
 
                     std::string image_prefix = prompt + img_prompt + "Picture " + std::to_string(i + 1) + ": <|vision_start|>";
                     int image_embed_idx      = static_cast<int>(tokenizer->encode(image_prefix, nullptr).size());
@@ -2645,7 +2681,9 @@ struct LLMEmbedder : public Conditioner {
 
                     auto resized_image = clip_preprocess(image, w_bar, h_bar);
                     auto image_embed   = llm->encode_image(n_threads, resized_image, false);
-                    GGML_ASSERT(!image_embed.empty());
+                    if (image_embed.empty()) {
+                        return {};
+                    }
                     image_embeds.emplace_back(image_embed_idx, image_embed);
                     image_embed_idx += 1 + static_cast<int>(image_embed.shape()[1]) + 6;
 
@@ -2818,7 +2856,9 @@ struct LLMEmbedder : public Conditioner {
                                                0,
                                                false,
                                                max_length);
-            GGML_ASSERT(!hidden_states.empty());
+            if (hidden_states.empty()) {
+                return {};
+            }
 
             if (hidden_states.shape()[1] > pixeldit_max_length) {
                 auto bos      = sd::ops::slice(hidden_states, 1, 0, 1);
@@ -2851,6 +2891,9 @@ struct LLMEmbedder : public Conditioner {
                                            max_length,
                                            deepstack_image_embeds,
                                            image_grids);
+        if (hidden_states.empty()) {
+            return {};
+        }
         std::vector<sd::Tensor<float>> extra_hidden_states_vec;
         if (sd_version_is_hunyuan_video(version) && byt5) {
             std::vector<std::string> quoted_texts;
@@ -2886,7 +2929,9 @@ struct LLMEmbedder : public Conditioner {
                                                         input_ids,
                                                         sd::Tensor<float>(),
                                                         false);
-                GGML_ASSERT(!byt5_hidden_states.empty());
+                if (byt5_hidden_states.empty()) {
+                    return {};
+                }
                 extra_hidden_states_vec.push_back(std::move(byt5_hidden_states));
             }
         }
@@ -2901,6 +2946,9 @@ struct LLMEmbedder : public Conditioner {
                                                      prompt_template_encode_start_idx,
                                                      spell_quotes,
                                                      max_length);
+            if (extra_hidden_states.empty()) {
+                return {};
+            }
             extra_hidden_states_vec.push_back(std::move(extra_hidden_states));
         }
 
@@ -3169,7 +3217,9 @@ struct LTXAVEmbedder : public Conditioner {
                                           {},
                                           true,
                                           false);
-        GGML_ASSERT(!hidden_states.empty());
+        if (hidden_states.empty()) {
+            return {};
+        }
         hidden_states = apply_token_weights(std::move(hidden_states), weights);
 
         int64_t valid_tokens = 0;
@@ -3241,7 +3291,9 @@ struct LTXAVEmbedder : public Conditioner {
         prompt_attn_range.second = static_cast<int>(prompt.size());
 
         auto hidden_states = encode_prompt(n_threads, prompt, prompt_attn_range);
-        GGML_ASSERT(!hidden_states.empty());
+        if (hidden_states.empty()) {
+            return {};
+        }
 
         int64_t t1 = ggml_time_ms();
         LOG_VERBOSE("computing LTXAV condition graph completed, taking %" PRId64 " ms", t1 - t0);

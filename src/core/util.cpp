@@ -1,5 +1,6 @@
 #include "core/util.h"
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <codecvt>
@@ -711,6 +712,16 @@ sd_graph_eval_callback_t sd_get_backend_eval_callback() {
 
 void* sd_get_backend_eval_callback_data() {
     return sd_backend_eval_cb_data;
+}
+
+static std::atomic<bool> g_sd_cancel_requested{false};
+
+void sd_set_cancel_requested(bool cancelled) {
+    g_sd_cancel_requested.store(cancelled, std::memory_order_release);
+}
+
+bool sd_is_cancel_requested() {
+    return g_sd_cancel_requested.load(std::memory_order_acquire);
 }
 
 sd_progress_cb_t sd_get_progress_callback() {

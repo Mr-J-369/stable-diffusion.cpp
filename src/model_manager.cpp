@@ -595,6 +595,9 @@ bool ModelManager::stage_tensors_to_compute_backend(const std::vector<TensorStat
         std::vector<TensorState*> chunk;
         size_t chunk_size = 0;
         for (TensorState* state : target_states) {
+            if (sd_is_cancel_requested()) {
+                return false;
+            }
             const size_t tensor_size = GGML_PAD(
                 ggml_backend_buft_get_alloc_size(staging_buft, state->tensor), alignment);
             if (!chunk.empty() && backend_limit > 0 &&
@@ -608,7 +611,7 @@ bool ModelManager::stage_tensors_to_compute_backend(const std::vector<TensorStat
             chunk.push_back(state);
             chunk_size = tensor_size > SIZE_MAX - chunk_size ? SIZE_MAX : chunk_size + tensor_size;
         }
-        if (!stage_chunk(chunk)) {
+        if (sd_is_cancel_requested() || !stage_chunk(chunk)) {
             return false;
         }
         LOG_VERBOSE("model manager staged compute params (%6.2f MB, %zu tensors, %zu blocks) to %s, taking %.2fs",
@@ -949,7 +952,10 @@ bool ModelManager::load_tensors(const std::vector<TensorState*>& states) {
             for (const auto& entry : batch)
                 names.insert(entry.first);
             auto callback = [&](const TensorStorage& source, ggml_tensor** dst) {
-                *dst       = nullptr;
+                *dst = nullptr;
+                if (sd_is_cancel_requested()) {
+                    return false;
+                }
                 auto found = batch.find(source.name);
                 if (found == batch.end())
                     return true;
